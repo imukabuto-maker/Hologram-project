@@ -92,6 +92,20 @@ ul{ list-style:none; margin:0; padding:0; }
 
 :focus-visible{ outline: 2px solid var(--accent-cyan); outline-offset: 1px; border-radius: 3px; }
 
+/*
+ * BUG FIX: atribut HTML `hidden` secara default hanya diterapkan lewat
+ * stylesheet browser (`[hidden]{ display:none }`) dengan prioritas cascade
+ * terendah. Begitu ada aturan author CSS yang menyetel `display` pada
+ * elemen yang sama (mis. `.modal-overlay{ display:flex }`,
+ * `.drag-overlay{ display:flex }`, `#mainCanvas,#webglCanvas{ display:block }`,
+ * `.empty-state{ display:flex }`), aturan author itu SELALU menang —
+ * akibatnya `element.hidden = true` tidak lagi menyembunyikan elemen sama
+ * sekali. Ini penyebab modal "Simpan Preset" tidak bisa hilang, dan juga
+ * berpotensi membuat drag-overlay/canvas kedua tumpang tindih. Aturan di
+ * bawah ini memaksa [hidden] selalu menang, di mana pun dipakai.
+ */
+[hidden]{ display: none !important; }
+
 @media (prefers-reduced-motion: reduce){
   *{ animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
@@ -491,6 +505,15 @@ input[type="range"]::-moz-range-thumb{
   background: transparent; color: var(--text-tertiary); cursor: pointer; font-size: 14px; line-height:1;
 }
 .frame-item .frame-remove:hover{ background: var(--danger-dim); color: var(--danger); }
+
+/* State interaksi frame-item (Tahap 2: upload & reorder) */
+.frame-item.is-active{
+  border-color: var(--accent-cyan);
+  box-shadow: inset 0 0 0 1px var(--accent-cyan);
+  background: var(--accent-cyan-dim);
+}
+.frame-item.is-dragging{ opacity: .4; }
+.frame-item.drag-over{ border-color: var(--accent-magenta); box-shadow: inset 0 0 0 1px var(--accent-magenta); }
 
 /* History list */
 .history-list{ display:flex; flex-direction:column; gap:4px; max-height: 180px; overflow-y:auto; }
