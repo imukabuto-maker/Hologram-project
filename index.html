@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lenticular Studio &mdash; 2D/3D Lenticular Image Editor</title>
+
+<!-- Font: display (Space Grotesk), body (IBM Plex Sans), angka/parameter (IBM Plex Mono) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app" data-mode="original">
+
+  <!-- ============================================================ -->
+  <!-- TITLE BAR                                                     -->
+  <!-- ============================================================ -->
+  <header id="titlebar">
+    <div class="titlebar-left">
+      <button class="icon-btn" id="toggleLeftPanel" title="Tampilkan/Sembunyikan Panel Kiri" aria-label="Toggle panel kiri">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 4h18v2H3zM3 11h12v2H3zM3 18h18v2H3z"/></svg>
+      </button>
+      <div class="brand" id="brand">
+        <span class="brand-lens" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i>
+        </span>
+        <span class="brand-word">
+          <span class="brand-word-a">LENTIC</span><span class="brand-word-b">STUDIO</span>
+        </span>
+      </div>
+    </div>
+
+    <nav class="titlebar-menu" aria-label="Menu utama">
+      <button class="menu-btn" id="btnNewProject">Proyek Baru</button>
+      <button class="menu-btn" id="btnUndo" disabled>Undo</button>
+      <button class="menu-btn" id="btnRedo" disabled>Redo</button>
+      <button class="menu-btn" id="btnCalibration">Kalibrasi&hellip;</button>
+    </nav>
+
+    <div class="titlebar-right">
+      <span class="project-name" id="projectName">Proyek Tanpa Judul</span>
+      <button class="icon-btn" id="toggleTheme" title="Ganti tema terang/gelap" aria-label="Toggle tema">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1Z"/></svg>
+      </button>
+      <button class="icon-btn" id="toggleRightPanel" title="Tampilkan/Sembunyikan Panel Kanan" aria-label="Toggle panel kanan">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 4h18v2H3zM9 11h12v2H9zM3 18h18v2H3z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ============================================================ -->
+  <!-- WORKSPACE (3 kolom: kiri, tengah, kanan)                      -->
+  <!-- ============================================================ -->
+  <div id="workspace">
+
+    <!-- ========================= LEFT PANEL ========================= -->
+    <aside id="left-panel" class="side-panel" aria-label="Panel sumber gambar">
+      <div class="panel-scroll">
+
+        <!-- Upload -->
+        <section class="panel-section" data-section="upload">
+          <header class="panel-section-header">
+            <span class="section-icon" aria-hidden="true">&#8593;</span>
+            <h2>Sumber Gambar</h2>
+          </header>
+
+          <div class="panel-section-body">
+            <div class="dropzone" id="dropzoneSingle" tabindex="0" role="button" aria-label="Upload satu gambar">
+              <input type="file" id="inputSingleImage" accept="image/*" hidden>
+              <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 3l5 5h-3v6h-4V8H7l5-5zM5 19h14v2H5z"/></svg>
+              <p><strong>Upload Gambar Tunggal</strong><br><span>Untuk depth map / mode 1 gambar</span></p>
+            </div>
+
+            <div class="dropzone" id="dropzoneMulti" tabindex="0" role="button" aria-label="Upload beberapa gambar">
+              <input type="file" id="inputMultiImage" accept="image/*" multiple hidden>
+              <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 4h10v2H6v10H4V4zm4 4h12v14H8V8zm2 2v10h8V10h-8z"/></svg>
+              <p><strong>Upload Beberapa Gambar</strong><br><span>Urutan = urutan sudut pandang (view)</span></p>
+            </div>
+
+            <ul class="frame-list" id="frameList" aria-label="Daftar frame / view">
+              <!-- diisi oleh app.js pada Tahap 2 -->
+            </ul>
+            <p class="empty-hint" id="frameListEmpty">Belum ada frame. Upload gambar untuk mengisi daftar view.</p>
+          </div>
+        </section>
+
+        <!-- Preset -->
+        <section class="panel-section" data-section="preset">
+          <header class="panel-section-header">
+            <span class="section-icon" aria-hidden="true">&#9733;</span>
+            <h2>Preset</h2>
+          </header>
+          <div class="panel-section-body">
+            <label class="field-label" for="presetSelect">Preset tersimpan</label>
+            <select id="presetSelect" class="input-select">
+              <option value="">&mdash; Belum ada preset &mdash;</option>
+            </select>
+            <div class="btn-row">
+              <button class="btn btn-secondary" id="btnLoadPreset">Load</button>
+              <button class="btn btn-secondary" id="btnSavePreset">Simpan Baru</button>
+              <button class="btn btn-danger-ghost" id="btnDeletePreset">Hapus</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- History -->
+        <section class="panel-section" data-section="history">
+          <header class="panel-section-header">
+            <span class="section-icon" aria-hidden="true">&#8635;</span>
+            <h2>Riwayat</h2>
+          </header>
+          <div class="panel-section-body">
+            <ul class="history-list" id="historyList">
+              <!-- diisi oleh app.js -->
+            </ul>
+            <p class="empty-hint" id="historyEmpty">Belum ada aktivitas.</p>
+            <button class="btn btn-secondary btn-block" id="btnClearHistory">Bersihkan Riwayat</button>
+          </div>
+        </section>
+
+      </div>
+    </aside>
+
+    <!-- ========================= CENTER ========================= -->
+    <main id="center-panel" aria-label="Area preview kanvas">
+
+      <div class="canvas-toolbar">
+        <div class="mode-tabs" role="tablist" aria-label="Mode preview">
+          <button class="mode-tab is-active" role="tab" aria-selected="true" data-mode="original">Original</button>
+          <button class="mode-tab" role="tab" aria-selected="false" data-mode="interlaced">Interlaced</button>
+          <button class="mode-tab" role="tab" aria-selected="false" data-mode="simulation">Lenticular Simulation</button>
+        </div>
+
+        <div class="canvas-toolbar-right">
+          <div class="view-toggle-group" id="lensOrientationToggle">
+            <button class="chip is-active" data-orientation="vertical" title="Lensa Vertikal">Vertikal</button>
+            <button class="chip" data-orientation="horizontal" title="Lensa Horizontal">Horizontal</button>
+          </div>
+          <div class="zoom-controls">
+            <button class="icon-btn sm" id="zoomOut" aria-label="Perkecil">&minus;</button>
+            <span class="zoom-value" id="zoomValue">100%</span>
+            <button class="icon-btn sm" id="zoomIn" aria-label="Perbesar">+</button>
+            <button class="icon-btn sm" id="zoomFit" title="Sesuaikan ke layar" aria-label="Fit to screen">
+              <svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm16 0v6h-6v-2h4v-4h2z"/></svg>
+            </button>
+          </div>
+          <button class="icon-btn sm" id="toggleGrid" title="Tampilkan grid lensa" aria-label="Toggle grid">
+            <svg viewBox="0 0 24 24" width="15" height="15"><path d="M3 3h18v18H3V3zm2 2v4h4V5H5zm6 0v4h4V5h-4zm6 0v4h4V5h-4zM5 11v4h4v-4H5zm6 0v4h4v-4h-4zm6 0v4h4v-4h-4zM5 17v2h4v-2H5zm6 0v2h4v-2h-4zm6 0v2h4v-2h-4z"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="canvas-stage" id="canvasStage">
+        <div class="canvas-scroll" id="canvasScroll">
+          <div class="canvas-surface" id="canvasSurface">
+            <canvas id="mainCanvas" width="800" height="600"></canvas>
+            <canvas id="webglCanvas" width="800" height="600" hidden></canvas>
+            <div class="lens-grid-overlay" id="lensGridOverlay" hidden></div>
+          </div>
+        </div>
+
+        <div class="empty-state" id="emptyState">
+          <svg viewBox="0 0 24 24" width="46" height="46"><path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm1 2v10h14V7H5zm2 8l3.2-4 2.4 3 1.8-2.4L18 15H7z"/></svg>
+          <h3>Belum ada gambar</h3>
+          <p>Upload gambar tunggal atau beberapa gambar dari panel kiri, atau seret file ke sini.</p>
+        </div>
+
+        <div class="drag-overlay" id="dragOverlay" hidden>
+          <p>Lepaskan untuk mengunggah gambar</p>
+        </div>
+      </div>
+
+      <!-- Simulation interaction hint, muncul hanya pada mode simulasi -->
+      <div class="sim-hint" id="simHint" hidden>
+        Seret untuk memutar &middot; Scroll untuk zoom &middot; Shift+Seret untuk pan
+      </div>
+    </main>
+
+    <!-- ========================= RIGHT PANEL ========================= -->
+    <aside id="right-panel" class="side-panel" aria-label="Panel parameter">
+      <div class="panel-scroll">
+
+        <form id="paramForm" autocomplete="off">
+
+          <!-- Group: Lens & Interlace -->
+          <details class="param-group" open data-group="lens">
+            <summary><span class="section-icon" aria-hidden="true">&#9707;</span>Lensa &amp; Interlace</summary>
+            <div class="param-group-body">
+
+              <div class="field-row">
+                <label for="paramLPI">LPI <span class="field-hint">(Lines Per Inch lensa)</span></label>
+                <div class="field-input-combo">
+                  <input type="range" id="paramLPI_range" min="10" max="200" step="0.1" value="60">
+                  <input type="number" id="paramLPI" class="input-number" min="10" max="200" step="0.1" value="60">
+                </div>
+              </div>
+
+              <div class="field-row">
+                <label for="paramPrinterDPI">Printer DPI</label>
+                <div class="field-input-combo">
+                  <input type="range" id="paramPrinterDPI_range" min="150" max="2400" step="1" value="720">
+                  <input type="number" id="paramPrinterDPI" class="input-number" min="150" max="2400" step="1" value="720">
+                </div>
+              </div>
+
+              <div class="field-row">
+                <label for="paramOutputDPI">Output DPI</label>
+                <div class="field-input-combo">
+                  <input type="range" id="paramOutputDPI_range" min="72" max="2400" step="1" value="300">
+                  <input type="number" id="paramOutputDPI" class="input-number" min="72" max="2400" step="1" value="300">
+                </div>
+              </div>
+
+              <div class="field-row">
+                <label for="paramViews">Number of Views</label>
+                <div class="field-input-combo">
+                  <input type="range" id="paramViews_range" min="2" max="16" step="1" value="2">
+                  <input type="number" id="paramViews" class="input-number" min="2" max="16" step="1" value="2">
+                </div>
+              </div>
+
+              <div class="field-row">
+                <label for="paramLensDir">Orientasi Lensa</label>
+                <select id="paramLensDir" class="input-select">
+                  <option value="vertical" selected>Vertikal</option>
+                  <option value="horizontal">Horizontal</option>
+                </select>
+              </div>
+
+            </div>
+          </details>
+
+          <!-- Group: Calibration / Fine correction -->
+          <details class="param-group" data-group="calibration">
+            <summary><span class="section-icon" aria-hidden="true">&#9881;</span>Kalibrasi &amp; Koreksi Halus</summary>
+            <div class="param-group-body">
+
+              <div class="field-row">
+                <label for="paramLensPitch">Lens Pitch <span class="field-hint">(mm)</span></label>
+                <div class="field-input-combo">
+                  <input type="range" id="paramLensPitch_range" min="0.1" max="10" step="0.001" value="0.635">
+                  <input type="number" id="paramLensPitch" class="input-number" min="0.1" max="10" step="0.001" value="0.635">
+                </div>
+              </div>
+
+              <div class="field-row">
+                <label for="paramPitchCorrection">Pitch Correction <span class="field-hint">(%)</span></label>
+                <div class="field-input-combo">
+                  <input type="range" id="paramPitchCorrection_range" min="-10" max="10" step="0.01" value="0">
+                  <input type="number" id="paramPitchCorrection" class="input-number" min="-10" max="10" step="0.01" value="0">
+                </div>
+              </div>
+
+              <div class="field-row">
+                <label for="paramAngleCorrection">Angle Correction <span class="field-hint">(&deg;)</span></label>
+                <div class="field-input-combo">
+                  <input type="range" id="paramAngleCorrection_range" min="-5" max="5" step="0.01" value="0">
+                  <input type="number" id="paramAngleCorrection" class="input-number" min="-5" max="5" step="0.01" value="0">
+                </div>
+              </div>
+
+              <div class="field-row">
+                <label for="paramSubpixelOffset">Subpixel Offset <span class="field-hint">(px)</span></label>
+                <div class="field-input-combo">
+                  <input type="range" id="paramSubpixelOffset_range" min="-1" max="1" step="0.001" value="0">
+                  <input type="number" id="paramSubpixelOffset" class="input-number" min="-1" max="1" step="0.001" value="0">
+                </div>
+              </div>
+
+              <div class="field-row">
+                <label for="paramCenterOffset">Center Offset <span class="field-hint">(px)</span></label>
+                <div class="field-input-combo">
+                  <input type="range" id="paramCenterOffset_range" min="-500" max="500" step="1" value="0">
+                  <input type="number" id="paramCenterOffset" class="input-number" min="-500" max="500" step="1" value="0">
+                </div>
+              </div>
+
+              <button type="button" class="btn btn-secondary btn-block" id="btnOpenCalibrationWizard">Buka Wizard Kalibrasi&hellip;</button>
+            </div>
+          </details>
+
+          <!-- Group: View order -->
+          <details class="param-group" data-group="vieworder">
+            <summary><span class="section-icon" aria-hidden="true">&#8646;</span>Urutan &amp; Orientasi View</summary>
+            <div class="param-group-body">
+
+              <div class="field-row">
+                <label for="paramStartView">Start View</label>
+                <input type="number" id="paramStartView" class="input-number" min="1" max="16" step="1" value="1">
+              </div>
+
+              <div class="field-row toggle-row">
+                <label for="paramReverseView">Reverse View</label>
+                <label class="switch">
+                  <input type="checkbox" id="paramReverseView">
+                  <span class="switch-track"><span class="switch-thumb"></span></span>
+                </label>
+              </div>
+
+              <div class="field-row toggle-row">
+                <label for="paramMirror">Mirror</label>
+                <label class="switch">
+                  <input type="checkbox" id="paramMirror">
+                  <span class="switch-track"><span class="switch-thumb"></span></span>
+                </label>
+              </div>
+
+              <div class="field-row toggle-row">
+                <label for="paramFlip">Flip</label>
+                <label class="switch">
+                  <input type="checkbox" id="paramFlip">
+                  <span class="switch-track"><span class="switch-thumb"></span></span>
+                </label>
+              </div>
+
+            </div>
+          </details>
+
+          <!-- Group: Output canvas -->
+          <details class="param-group" data-group="output">
+            <summary><span class="section-icon" aria-hidden="true">&#9636;</span>Output &amp; Kanvas</summary>
+            <div class="param-group-body">
+
+              <div class="field-row">
+                <label for="paramOutputWidth">Output Width <span class="field-hint">(mm)</span></label>
+                <input type="number" id="paramOutputWidth" class="input-number" min="1" step="0.1" value="100">
+              </div>
+
+              <div class="field-row">
+                <label for="paramOutputHeight">Output Height <span class="field-hint">(mm)</span></label>
+                <input type="number" id="paramOutputHeight" class="input-number" min="1" step="0.1" value="150">
+              </div>
+
+              <div class="field-row">
+                <label for="paramBleed">Bleed <span class="field-hint">(mm)</span></label>
+                <input type="number" id="paramBleed" class="input-number" min="0" step="0.1" value="0">
+              </div>
+
+              <div class="field-row toggle-row">
+                <label for="paramCropEnabled">Crop Aktif</label>
+                <label class="switch">
+                  <input type="checkbox" id="paramCropEnabled">
+                  <span class="switch-track"><span class="switch-thumb"></span></span>
+                </label>
+              </div>
+
+              <button type="button" class="btn btn-secondary btn-block" id="btnResetCrop" disabled>Reset Area Crop</button>
+            </div>
+          </details>
+
+        </form>
+
+        <!-- Export -->
+        <section class="panel-section" data-section="export">
+          <header class="panel-section-header">
+            <span class="section-icon" aria-hidden="true">&#8681;</span>
+            <h2>Export</h2>
+          </header>
+          <div class="panel-section-body">
+            <button class="btn btn-primary btn-block" id="btnExportPNG" disabled>Export PNG (Interlaced)</button>
+            <button class="btn btn-secondary btn-block" id="btnExportViewsZip" disabled>Export Semua View (ZIP)</button>
+            <button class="btn btn-secondary btn-block" id="btnExportOriginal" disabled>Export Original PNG</button>
+          </div>
+        </section>
+
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- STATUS BAR                                                    -->
+  <!-- ============================================================ -->
+  <footer id="statusbar">
+    <div class="status-group">
+      <span class="status-label">Gambar:</span>
+      <span class="status-value" id="statusImageDims">&mdash;</span>
+    </div>
+    <div class="status-group">
+      <span class="status-label">Views:</span>
+      <span class="status-value" id="statusViewCount">0</span>
+    </div>
+    <div class="status-group">
+      <span class="status-label">PixelsPerLens:</span>
+      <span class="status-value" id="statusPixelsPerLens">&mdash;</span>
+    </div>
+    <div class="status-group">
+      <span class="status-label">PixelsPerView:</span>
+      <span class="status-value" id="statusPixelsPerView">&mdash;</span>
+    </div>
+    <div class="status-group status-group-fill"></div>
+    <div class="status-group">
+      <span class="status-label">Mode:</span>
+      <span class="status-value" id="statusMode">Original</span>
+    </div>
+    <div class="status-group">
+      <span class="status-label">Zoom:</span>
+      <span class="status-value" id="statusZoom">100%</span>
+    </div>
+  </footer>
+
+  <!-- ============================================================ -->
+  <!-- MODAL: Calibration Wizard (kerangka, logika Tahap 6)          -->
+  <!-- ============================================================ -->
+  <div class="modal-overlay" id="modalCalibration" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="calibrationTitle">
+      <header class="modal-header">
+        <h3 id="calibrationTitle">Wizard Kalibrasi Lensa</h3>
+        <button class="icon-btn" id="closeCalibrationModal" aria-label="Tutup">&times;</button>
+      </header>
+      <div class="modal-body">
+        <ol class="wizard-steps" id="wizardSteps">
+          <li class="is-active" data-step="1">Generate Strip</li>
+          <li data-step="2">Input Hasil</li>
+          <li data-step="3">Hitung Koreksi</li>
+          <li data-step="4">Simpan</li>
+        </ol>
+        <div class="wizard-panel" id="wizardPanel">
+          <p class="empty-hint">Wizard kalibrasi akan diimplementasikan pada Tahap 6.</p>
+        </div>
+      </div>
+      <footer class="modal-footer">
+        <button class="btn btn-secondary" id="wizardBack" disabled>&larr; Kembali</button>
+        <button class="btn btn-primary" id="wizardNext">Lanjut &rarr;</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- MODAL: Simpan Preset                                          -->
+  <!-- ============================================================ -->
+  <div class="modal-overlay" id="modalSavePreset" hidden>
+    <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="savePresetTitle">
+      <header class="modal-header">
+        <h3 id="savePresetTitle">Simpan Preset</h3>
+        <button class="icon-btn" id="closeSavePresetModal" aria-label="Tutup">&times;</button>
+      </header>
+      <div class="modal-body">
+        <label class="field-label" for="presetNameInput">Nama Preset</label>
+        <input type="text" id="presetNameInput" class="input-text" placeholder="Mis. Kartu Pos 3 View">
+      </div>
+      <footer class="modal-footer">
+        <button class="btn btn-secondary" id="cancelSavePreset">Batal</button>
+        <button class="btn btn-primary" id="confirmSavePreset">Simpan</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- toast container untuk notifikasi -->
+  <div id="toastContainer" aria-live="polite"></div>
+
+</div>
+
+<!-- Three.js untuk preview simulasi lenticular (Tahap 5) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<!-- Urutan penting: utils & storage dulu, baru modul lain, app.js terakhir -->
+<script src="utils.js"></script>
+<script src="storage.js"></script>
+<script src="settings.js"></script>
+<script src="interlace.js"></script>
+<script src="preview.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
