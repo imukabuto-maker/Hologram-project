@@ -113,6 +113,9 @@
     const webglCanvas = document.getElementById('webglCanvas');
     const simHint = document.getElementById('simHint');
     const statusMode = document.getElementById('statusMode');
+    const mStatusMode = document.getElementById('mStatusMode');
+    const simEmptyState = document.getElementById('simEmptyState');
+    const emptyState = document.getElementById('emptyState');
 
     const modeLabels = {
       original: 'Original',
@@ -129,16 +132,72 @@
         });
         appEl.dataset.mode = mode;
         statusMode.textContent = modeLabels[mode];
+        mStatusMode.textContent = modeLabels[mode];
 
         const isSim = mode === 'simulation';
-        mainCanvas.hidden = isSim;
-        webglCanvas.hidden = !isSim;
         simHint.hidden = !isSim;
 
-        // TODO (Tahap 5): panggil Preview.initSimulation() saat mode === 'simulation'
-        // dan Preview.renderOriginal()/renderInterlaced() untuk dua mode lainnya.
+        if (isSim) {
+          mainCanvas.hidden = true;
+          emptyState.hidden = true; // simEmptyState yang mengambil alih pesan "belum ada gambar" di mode ini
+          enterSimulationMode();
+        } else {
+          webglCanvas.hidden = true;
+          simEmptyState.hidden = true;
+          Preview.stop();
+          mainCanvas.hidden = false;
+          renderActiveFrame(); // pastikan mode Original menampilkan frame aktif lagi (mis. setelah dari simulasi)
+        }
+
+        // TODO (Tahap 4): render hasil interlace sungguhan saat mode === 'interlaced'.
+        // Untuk saat ini mode Interlaced menampilkan frame aktif yang sama seperti Original.
       });
     });
+  }
+
+  /**
+   * Masuk ke mode simulasi: siapkan renderer (sekali saja), muat tekstur
+   * dari frame yang ada, dan mulai render loop. Bila frame < 2, tampilkan
+   * pesan penuntun alih-alih kanvas kosong.
+   */
+  function enterSimulationMode() {
+    const webglCanvas = document.getElementById('webglCanvas');
+    const simEmptyState = document.getElementById('simEmptyState');
+    const gyroBtn = document.getElementById('btnEnableGyro');
+
+    Preview.ensureRenderer(webglCanvas);
+
+    if (frames.length < 2) {
+      webglCanvas.hidden = true;
+      simEmptyState.hidden = false;
+      return;
+    }
+
+    simEmptyState.hidden = true;
+    webglCanvas.hidden = false;
+
+    const ok = Preview.setFrames(frames.map(f => f.img));
+    if (!ok) {
+      simEmptyState.hidden = false;
+      webglCanvas.hidden = true;
+      return;
+    }
+
+    Preview.setOrientation(getLensOrientation());
+    Preview.start();
+
+    // Tombol gyro hanya relevan di perangkat yang mendukung sensor orientasi
+    // (mis. iPhone). Di desktop tanpa sensor, tombol ini tetap disembunyikan.
+    gyroBtn.hidden = !Preview.hasGyroSupport();
+  }
+
+  /** Bila sedang berada di mode simulasi, muat ulang tekstur (dipanggil saat frame berubah). */
+  function refreshSimulationIfActive() {
+    if (appEl.dataset.mode === 'simulation') enterSimulationMode();
+  }
+
+  function getLensOrientation() {
+    return document.getElementById('paramLensDir').value === 'horizontal' ? 'horizontal' : 'vertical';
   }
 
   /* ============================================================ *
@@ -154,6 +213,10 @@
       select.value = orientation;
       gridOverlay.classList.toggle('horizontal', orientation === 'horizontal');
       updateStatusMath();
+
+      if (appEl.dataset.mode === 'simulation') {
+        Preview.setOrientation(orientation); // sumbu drag/tilt ikut berubah tanpa perlu reload tekstur
+      }
     }
 
     chips.forEach(chip => {
@@ -217,6 +280,7 @@
     document.getElementById('statusPixelsPerView').textContent =
       Utils.formatNumber(result.pixelsPerView, 4, ' px');
     document.getElementById('statusViewCount').textContent = String(views);
+    document.getElementById('mStatusViewCount').textContent = String(views);
   }
 
   /* ============================================================ *
@@ -311,12 +375,15 @@
       canvas.width = 0;
       canvas.height = 0;
       document.getElementById('statusImageDims').textContent = '—';
+      document.getElementById('mStatusImageDims').textContent = '—';
       return;
     }
 
     emptyState.hidden = true;
     drawFrameToMainCanvas(frame);
-    document.getElementById('statusImageDims').textContent = `${frame.width} × ${frame.height} px`;
+    const dimsLabel = `${frame.width} × ${frame.height} px`;
+    document.getElementById('statusImageDims').textContent = dimsLabel;
+    document.getElementById('mStatusImageDims').textContent = dimsLabel;
     if (fitToScreen) requestAnimationFrame(zoomFitToStage);
   }
 
@@ -418,6 +485,7 @@
     frames.splice(toIdx, 0, moved);
     renderFrameList();
     logHistory('Mengurutkan ulang daftar view');
+    refreshSimulationIfActive();
   }
 
   function removeFrame(id) {
@@ -432,6 +500,7 @@
     renderFrameList();
     renderActiveFrame();
     logHistory(`Menghapus "${removed.name}"`);
+    refreshSimulationIfActive();
   }
 
   function clearFrames() {
@@ -440,6 +509,7 @@
     activeFrameId = null;
     renderFrameList();
     renderActiveFrame();
+    refreshSimulationIfActive();
   }
 
   /** Terima FileList/array File (dari input atau drag-drop), validasi, dan tambahkan sebagai frame baru. */
@@ -484,6 +554,7 @@
       syncViewCountToFrames();
       logHistory(`Menambahkan ${addedCount} gambar`);
       toast(`${addedCount} gambar berhasil ditambahkan`, 'success');
+      refreshSimulationIfActive();
     });
   }
 
@@ -561,6 +632,60 @@
   function closeModal(id) { document.getElementById(id).hidden = true; }
 
   /* ============================================================ *
+   * Kontrol khusus mode Simulasi: tombol izin sensor kemiringan (gyro)
+   * ============================================================ */
+  function initSimulationControls() {
+    document.getElementById('btnEnableGyro').addEventListener('click', (e) => {
+      const btn = e.currentTarget;
+      Preview.requestGyro().then(granted => {
+        if (granted) {
+          toast('Sensor kemiringan aktif — miringkan perangkat untuk mengubah sudut pandang', 'success');
+          btn.textContent = 'Sensor Aktif ✓';
+          btn.disabled = true;
+        } else {
+          toast('Izin sensor kemiringan ditolak atau tidak didukung perangkat ini', 'error');
+        }
+      });
+    });
+  }
+
+  /* ============================================================ *
+   * Resize window/orientasi layar (penting untuk rotasi iPhone)
+   * ============================================================ */
+  function initResizeHandling() {
+    const onResize = Utils.debounce(() => {
+      Preview.resize();
+      if (appEl.dataset.mode !== 'simulation' && frames.length) {
+        zoomFitToStage();
+      }
+    }, 150);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+  }
+
+  /* ============================================================ *
+   * Tab bar bawah khusus mobile: berpindah antara Sumber / Kanvas / Parameter
+   * ============================================================ */
+  function initMobileTabbar() {
+    const tabbar = document.getElementById('mobileTabbar');
+    if (!tabbar) return;
+    const buttons = Array.from(tabbar.querySelectorAll('.mobile-tab'));
+
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const view = btn.dataset.view;
+        appEl.dataset.mobileView = view;
+        buttons.forEach(b => b.classList.toggle('is-active', b === btn));
+        // Kanvas/simulasi perlu tahu ukurannya berubah begitu drawer disembunyikan/ditampilkan.
+        requestAnimationFrame(() => {
+          Preview.resize();
+          if (appEl.dataset.mode !== 'simulation' && frames.length) zoomFitToStage();
+        });
+      });
+    });
+  }
+
+  /* ============================================================ *
    * Dropzone: klik membuka file dialog, drag & drop memproses file
    * sungguhan (Tahap 2) melalui Frame Store di atas.
    * ============================================================ */
@@ -609,21 +734,24 @@
   /* ============================================================ *
    * Inisialisasi umum lain
    * ============================================================ */
+  function handleNewProject() {
+    if (frames.length === 0) {
+      toast('Belum ada gambar untuk dihapus');
+      return;
+    }
+    const ok = window.confirm(
+      'Mulai proyek baru? Semua gambar yang sudah diupload akan dihapus dari daftar.\n\n' +
+      '(Reset parameter ke default akan aktif penuh setelah Tahap 3.)'
+    );
+    if (!ok) return;
+    clearFrames();
+    logHistory('Memulai proyek baru');
+    toast('Proyek baru dimulai — semua gambar dihapus', 'success');
+  }
+
   function initMiscStubs() {
-    document.getElementById('btnNewProject').addEventListener('click', () => {
-      if (frames.length === 0) {
-        toast('Belum ada gambar untuk dihapus');
-        return;
-      }
-      const ok = window.confirm(
-        'Mulai proyek baru? Semua gambar yang sudah diupload akan dihapus dari daftar.\n\n' +
-        '(Reset parameter ke default akan aktif penuh setelah Tahap 3.)'
-      );
-      if (!ok) return;
-      clearFrames();
-      logHistory('Memulai proyek baru');
-      toast('Proyek baru dimulai — semua gambar dihapus', 'success');
-    });
+    document.getElementById('btnNewProject').addEventListener('click', handleNewProject);
+    document.getElementById('btnNewProjectCompact').addEventListener('click', handleNewProject);
 
     document.getElementById('btnClearHistory').addEventListener('click', () => {
       historyEntries = [];
@@ -654,11 +782,14 @@
     initModals();
     initDropzones();
     initMiscStubs();
+    initSimulationControls();
+    initResizeHandling();
+    initMobileTabbar();
     renderFrameList();
     renderHistory();
     updateStatusMath();
 
-    console.info('[LenticularStudio] Tahap 2 (Upload Image) siap. Menunggu konfirmasi untuk Tahap 3: Settings.');
+    console.info('[LenticularStudio] Tahap 2 (Upload Image) + mobile/simulasi siap. Menunggu konfirmasi untuk Tahap 3: Settings.');
   }
 
   document.addEventListener('DOMContentLoaded', init);

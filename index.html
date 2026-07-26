@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Lenticular Studio &mdash; 2D/3D Lenticular Image Editor</title>
 
 <!-- Font: display (Space Grotesk), body (IBM Plex Sans), angka/parameter (IBM Plex Mono) -->
@@ -14,7 +14,7 @@
 </head>
 <body>
 
-<div id="app" data-mode="original">
+<div id="app" data-mode="original" data-mobile-view="canvas">
 
   <!-- ============================================================ -->
   <!-- TITLE BAR                                                     -->
@@ -66,6 +66,9 @@
           <header class="panel-section-header">
             <span class="section-icon" aria-hidden="true">&#8593;</span>
             <h2>Sumber Gambar</h2>
+            <button class="icon-btn sm header-action" id="btnNewProjectCompact" title="Proyek baru (hapus semua gambar)" aria-label="Proyek baru">
+              <svg viewBox="0 0 24 24" width="14" height="14"><path d="M6 6h9v2H8v8h8v-3h2v5H6V6zm10-2 4 4-4 4v-3h-4V7h4V4z"/></svg>
+            </button>
           </header>
 
           <div class="panel-section-body">
@@ -140,16 +143,23 @@
             <button class="chip is-active" data-orientation="vertical" title="Lensa Vertikal">Vertikal</button>
             <button class="chip" data-orientation="horizontal" title="Lensa Horizontal">Horizontal</button>
           </div>
-          <div class="zoom-controls">
-            <button class="icon-btn sm" id="zoomOut" aria-label="Perkecil">&minus;</button>
-            <span class="zoom-value" id="zoomValue">100%</span>
-            <button class="icon-btn sm" id="zoomIn" aria-label="Perbesar">+</button>
-            <button class="icon-btn sm" id="zoomFit" title="Sesuaikan ke layar" aria-label="Fit to screen">
-              <svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm16 0v6h-6v-2h4v-4h2z"/></svg>
+          <div class="control-group-2d" id="controlGroup2D">
+            <div class="zoom-controls">
+              <button class="icon-btn sm" id="zoomOut" aria-label="Perkecil">&minus;</button>
+              <span class="zoom-value" id="zoomValue">100%</span>
+              <button class="icon-btn sm" id="zoomIn" aria-label="Perbesar">+</button>
+              <button class="icon-btn sm" id="zoomFit" title="Sesuaikan ke layar" aria-label="Fit to screen">
+                <svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm16 0v6h-6v-2h4v-4h2z"/></svg>
+              </button>
+            </div>
+            <button class="icon-btn sm" id="toggleGrid" title="Tampilkan grid lensa" aria-label="Toggle grid">
+              <svg viewBox="0 0 24 24" width="15" height="15"><path d="M3 3h18v18H3V3zm2 2v4h4V5H5zm6 0v4h4V5h-4zm6 0v4h4V5h-4zM5 11v4h4v-4H5zm6 0v4h4v-4h-4zm6 0v4h4v-4h-4zM5 17v2h4v-2H5zm6 0v2h4v-2h-4zm6 0v2h4v-2h-4z"/></svg>
             </button>
           </div>
-          <button class="icon-btn sm" id="toggleGrid" title="Tampilkan grid lensa" aria-label="Toggle grid">
-            <svg viewBox="0 0 24 24" width="15" height="15"><path d="M3 3h18v18H3V3zm2 2v4h4V5H5zm6 0v4h4V5h-4zm6 0v4h4V5h-4zM5 11v4h4v-4H5zm6 0v4h4v-4h-4zm6 0v4h4v-4h-4zM5 17v2h4v-2H5zm6 0v2h4v-2h-4zm6 0v2h4v-2h-4z"/></svg>
+
+          <button class="btn btn-secondary sim-only-control" id="btnEnableGyro" hidden>
+            <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:-2px;margin-right:5px;"><path d="M12 2a5 5 0 0 1 5 5v3h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h1V7a5 5 0 0 1 5-5zm0 2a3 3 0 0 0-3 3v3h6V7a3 3 0 0 0-3-3z"/></svg>
+            Aktifkan Sensor
           </button>
         </div>
       </div>
@@ -169,6 +179,12 @@
           <p>Upload gambar tunggal atau beberapa gambar dari panel kiri, atau seret file ke sini.</p>
         </div>
 
+        <div class="empty-state" id="simEmptyState" hidden>
+          <svg viewBox="0 0 24 24" width="46" height="46"><path d="M12 2 2 7v10l10 5 10-5V7L12 2zm0 2.2 7.4 3.7L12 11.6 4.6 7.9 12 4.2zM4 9.6l7 3.5v7.1l-7-3.5V9.6zm9 10.6v-7.1l7-3.5v7.1l-7 3.5z"/></svg>
+          <h3>Simulasi butuh minimal 2 gambar</h3>
+          <p>Upload minimal 2 gambar/view dari panel kiri untuk mengaktifkan simulasi lenticular interaktif.</p>
+        </div>
+
         <div class="drag-overlay" id="dragOverlay" hidden>
           <p>Lepaskan untuk mengunggah gambar</p>
         </div>
@@ -176,7 +192,14 @@
 
       <!-- Simulation interaction hint, muncul hanya pada mode simulasi -->
       <div class="sim-hint" id="simHint" hidden>
-        Seret untuk memutar &middot; Scroll untuk zoom &middot; Shift+Seret untuk pan
+        Seret untuk memutar &middot; Scroll/Cubit untuk zoom &middot; Shift+Seret/2 jari untuk geser
+      </div>
+
+      <!-- Pengganti status bar khusus mobile (statusbar desktop disembunyikan di layar sempit) -->
+      <div class="mobile-status-card" id="mobileStatusCard">
+        <span>Gambar: <b id="mStatusImageDims">&mdash;</b></span>
+        <span>Views: <b id="mStatusViewCount">0</b></span>
+        <span>Mode: <b id="mStatusMode">Original</b></span>
       </div>
     </main>
 
@@ -402,6 +425,24 @@
       <span class="status-value" id="statusZoom">100%</span>
     </div>
   </footer>
+
+  <!-- ============================================================ -->
+  <!-- BOTTOM TAB BAR — hanya tampil di layar sempit (mobile/iPhone) -->
+  <!-- ============================================================ -->
+  <nav class="mobile-tabbar" id="mobileTabbar" aria-label="Navigasi mobile">
+    <button class="mobile-tab" data-view="left" aria-label="Sumber Gambar">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 4h10v2H6v10H4V4zm4 4h12v14H8V8zm2 2v10h8V10h-8z"/></svg>
+      <span>Sumber</span>
+    </button>
+    <button class="mobile-tab is-active" data-view="canvas" aria-label="Kanvas">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm1 2v10h14V7H5zm2 8l3.2-4 2.4 3 1.8-2.4L18 15H7z"/></svg>
+      <span>Kanvas</span>
+    </button>
+    <button class="mobile-tab" data-view="right" aria-label="Parameter">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M3 4h18v2H3zM9 11h12v2H9zM3 18h18v2H3z"/></svg>
+      <span>Parameter</span>
+    </button>
+  </nav>
 
   <!-- ============================================================ -->
   <!-- MODAL: Calibration Wizard (kerangka, logika Tahap 6)          -->

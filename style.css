@@ -230,7 +230,8 @@ ul{ list-style:none; margin:0; padding:0; }
   padding: 9px 12px;
   border-bottom: 1px solid var(--border-subtle);
 }
-.panel-section-header h2{ font-size: 12px; letter-spacing:.03em; text-transform: uppercase; color: var(--text-secondary); }
+.panel-section-header h2{ font-size: 12px; letter-spacing:.03em; text-transform: uppercase; color: var(--text-secondary); flex: 1 1 auto; }
+.header-action{ margin-left: auto; flex: none; }
 .section-icon{ font-size: 13px; color: var(--accent-cyan); width:14px; text-align:center; }
 .panel-section-body{ padding: 12px; display:flex; flex-direction:column; gap:10px; }
 
@@ -404,6 +405,15 @@ input[type="range"]::-moz-range-thumb{
 .mode-tab:hover:not(.is-active){ color: var(--text-primary); }
 
 .canvas-toolbar-right{ display:flex; align-items:center; gap: 10px; }
+.control-group-2d{ display:flex; align-items:center; gap: 10px; }
+
+/* Kontrol yang hanya relevan pada mode Lenticular Simulation (mis. tombol
+   gyroscope) disembunyikan secara default, dan kontrol zoom/grid 2D
+   disembunyikan begitu mode simulasi aktif — karena Three.js mengurus
+   zoom/pan/rotate-nya sendiri lewat gesture pada kanvas WebGL. */
+.sim-only-control{ display: none; }
+#app[data-mode="simulation"] .sim-only-control{ display: inline-flex; align-items:center; }
+#app[data-mode="simulation"] .control-group-2d{ display: none; }
 .zoom-controls{ display:flex; align-items:center; gap:6px; background: var(--bg-input); padding: 3px 6px; border-radius: var(--radius-sm); }
 .zoom-value{ font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); min-width: 40px; text-align:center; }
 
@@ -431,6 +441,21 @@ input[type="range"]::-moz-range-thumb{
   flex: 0 0 auto;
 }
 #mainCanvas, #webglCanvas{ display:block; max-width: none; }
+
+/* Mode Simulasi: kanvas WebGL mengisi penuh & responsif terhadap ukuran
+   layar (berbeda dari mainCanvas yang piksel-asli untuk akurasi cetak).
+   touch-action:none mencegah Safari iOS menangani drag/pinch sebagai
+   scroll/zoom halaman, supaya gesture kustom (rotate/zoom/pan) di preview.js
+   bekerja mulus di iPhone. */
+#app[data-mode="simulation"] .canvas-surface{
+  width: 100%; height: 100%;
+  box-shadow: none; background: none;
+}
+#app[data-mode="simulation"] #webglCanvas{
+  width: 100%; height: 100%;
+  touch-action: none;
+}
+#app[data-mode="simulation"] #canvasScroll{ overflow: hidden; }
 
 .lens-grid-overlay{
   position:absolute; inset:0; pointer-events:none;
@@ -465,6 +490,10 @@ input[type="range"]::-moz-range-thumb{
   text-align:center; padding: 6px; font-size: 11px; color: var(--text-tertiary);
   background: var(--bg-panel); border-top: 1px solid var(--border-subtle);
 }
+
+/* Kartu ringkas pengganti status bar di layar mobile — disembunyikan di
+   desktop secara default, ditampilkan lewat @media (max-width:860px). */
+.mobile-status-card{ display: none; }
 
 /* ==========================================================================
    Dropzones
@@ -591,23 +620,120 @@ input[type="range"]::-moz-range-thumb{
 @keyframes toastIn{ from{ opacity:0; transform: translateY(8px); } to{ opacity:1; transform:none; } }
 
 /* ==========================================================================
+   Mobile Tab Bar (khusus iPhone/layar sempit)
+   ========================================================================== */
+.mobile-tabbar{
+  display: none; /* hanya tampil lewat media query di bawah */
+  position: fixed; left:0; right:0; bottom:0; z-index: 60;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-subtle);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.mobile-tab{
+  background: transparent; border: none; color: var(--text-tertiary);
+  display:flex; flex-direction: column; align-items:center; gap: 3px;
+  padding: 8px 4px 6px; font-size: 10.5px; cursor: pointer;
+  flex: 1 1 0;
+}
+.mobile-tab svg{ fill: currentColor; }
+.mobile-tab.is-active{ color: var(--accent-cyan); }
+
+/* ==========================================================================
    Responsive
    ========================================================================== */
 @media (max-width: 1100px){
   :root{ --left-w: 240px; --right-w: 280px; }
 }
 
+/* --- iPhone / layar sempit (<=860px) --------------------------------------
+   Pendekatan: bukan drawer sempit di atas kanvas, tapi tiga "layar" penuh
+   yang berpindah lewat tab bar bawah (Sumber / Kanvas / Parameter) — pola
+   yang jauh lebih nyaman dipakai satu tangan di iPhone. Kanvas tetap jadi
+   layar default supaya pengguna langsung melihat preview/simulasi.
+   ============================================================================ */
 @media (max-width: 860px){
-  #workspace{ grid-template-columns: 1fr !important; }
-  .side-panel{
-    position: fixed; top: var(--titlebar-h); bottom: var(--statusbar-h);
-    width: min(84vw, 320px); z-index: 50;
-    box-shadow: var(--shadow-panel);
-    transform: translateX(-100%);
-    transition: transform var(--transition-med);
+  :root{ --titlebar-h: 50px; --statusbar-h: 0px; } /* status bar teks digantikan info ringkas di tab Kanvas */
+
+  body{ overflow: hidden; }
+
+  #titlebar{
+    padding-top: env(safe-area-inset-top, 0px);
+    height: calc(var(--titlebar-h) + env(safe-area-inset-top, 0px));
   }
-  #right-panel{ left:auto; right:0; transform: translateX(100%); }
-  #workspace:not(.no-left) #left-panel{ transform: translateX(0); }
-  #workspace:not(.no-right) #right-panel{ transform: translateX(0); }
-  .titlebar-menu{ display:none; }
+  .titlebar-menu{ display:none; } /* Kalibrasi & Proyek Baru tetap bisa diakses dari tab Parameter/Sumber */
+  #toggleLeftPanel, #toggleRightPanel{ display:none; } /* digantikan tab bar bawah */
+  .project-name{ display:none; }
+
+  #workspace{
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 1fr;
+    position: relative;
+  }
+
+  /* Ketiga area jadi lapisan penuh layar, mana yang tampil diatur lewat
+     atribut data-mobile-view pada #app (diubah oleh app.js saat tab bar
+     bawah ditekan). */
+  .side-panel, #center-panel{
+    position: absolute; inset: 0;
+    transform: none !important; /* matikan animasi drawer versi desktop */
+    box-shadow: none;
+    width: 100%;
+  }
+  #left-panel, #right-panel{ border: none; }
+
+  #app[data-mobile-view="canvas"] #left-panel,
+  #app[data-mobile-view="canvas"] #right-panel{ display: none; }
+  #app[data-mobile-view="left"] #center-panel,
+  #app[data-mobile-view="left"] #right-panel{ display: none; }
+  #app[data-mobile-view="right"] #center-panel,
+  #app[data-mobile-view="right"] #left-panel{ display: none; }
+
+  #workspace{ padding-bottom: calc(54px + env(safe-area-inset-bottom, 0px)); }
+
+  .mobile-tabbar{ display: flex; }
+
+  /* Status bar disembunyikan di mobile (layar terlalu sempit untuk semua
+     info sekaligus) — nilai pentingnya (dimensi gambar, mode, PixelsPerLens)
+     tetap terlihat di kartu ringkas pada tab Kanvas, lihat #mobileStatusCard. */
+  #statusbar{ display: none; }
+
+  /* Target sentuh lebih besar */
+  .icon-btn{ width: 36px; height: 36px; }
+  .icon-btn.sm{ width: 32px; height: 32px; }
+  .chip{ padding: 8px 12px; }
+  .btn{ padding: 10px 14px; }
+  .switch{ width: 42px; height: 24px; }
+  .switch-thumb{ width: 20px; height: 20px; }
+  .switch input:checked + .switch-track .switch-thumb{ transform: translateX(18px); }
+
+  /* Cegah Safari iOS auto-zoom saat fokus ke input (terjadi bila font-size < 16px) */
+  input[type="number"], input[type="text"], .input-select{ font-size: 16px; padding: 9px 10px; }
+  .field-input-combo .input-number{ width: 88px; }
+
+  /* Panel kiri/kanan: beri jarak lebih lega untuk jari & padding aman notch */
+  .panel-scroll{ padding: 14px; padding-bottom: 24px; gap: 12px; }
+
+  /* Kartu ringkas status di tab Kanvas (pengganti status bar desktop) */
+  .mobile-status-card{
+    display: flex; flex-wrap: wrap; gap: 6px 14px;
+    background: var(--bg-panel); border-top: 1px solid var(--border-subtle);
+    padding: 8px 14px; font-size: 11px;
+  }
+  .mobile-status-card span{ color: var(--text-secondary); }
+  .mobile-status-card b{ color: var(--text-primary); font-family: var(--font-mono); font-weight: 500; }
+
+  /* Modal hampir penuh layar, lebih mudah disentuh */
+  .modal-overlay{ align-items: flex-end; padding: 0; }
+  .modal{
+    width: 100%; max-width: 100%;
+    max-height: calc(92vh - env(safe-area-inset-bottom, 0px));
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/* Layar sangat sempit (iPhone SE dsb.) — rapatkan brand & toolbar */
+@media (max-width: 380px){
+  .brand-word{ font-size: 13px; }
+  .mode-tab{ padding: 7px 9px; font-size: 11.5px; }
 }
