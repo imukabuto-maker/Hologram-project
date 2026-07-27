@@ -125,6 +125,130 @@ const Utils = (() => {
     return /^image\/(png|jpe?g|webp|bmp|gif)$/i.test(file.type);
   }
 
+  /** Unduh Blob sebagai file, lewat elemen <a download> sementara. */
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Beri jeda sebelum revoke supaya proses download sempat dimulai di semua browser.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  /** Bungkus HTMLCanvasElement.toBlob dalam Promise agar bisa dipakai dengan async/await. */
+  function canvasToBlob(canvas, type = 'image/png', quality) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(blob => {
+        if (blob) resolve(blob);
+        else reject(new Error('canvas.toBlob mengembalikan null'));
+      }, type, quality);
+    });
+  }
+
+  /* ---------------------------------------------------------------------
+   * Pembuat file .zip minimal (metode STORE / tanpa kompresi).
+   * Sengaja ditulis manual (bukan library eksternal) untuk mematuhi batasan
+   * "hanya vanilla JS" — cukup untuk mengemas beberapa PNG hasil export.
+   * ------------------------------------------------------------------- */
+  let _crcTable = null;
+  function getCrcTable() {
+    if (_crcTable) return _crcTable;
+    const table = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      table[n] = c >>> 0;
+    }
+    _crcTable = table;
+    return table;
+  }
+
+  function crc32(bytes) {
+    const table = getCrcTable();
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) crc = table[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function dosDateTime(date = new Date()) {
+    const time = ((date.getHours() & 0x1F) << 11) | ((date.getMinutes() & 0x3F) << 5) | ((date.getSeconds() >> 1) & 0x1F);
+    const dateVal = (((date.getFullYear() - 1980) & 0x7F) << 9) | (((date.getMonth() + 1) & 0xF) << 5) | (date.getDate() & 0x1F);
+    return { time, dateVal };
+  }
+
+  /**
+   * Buat file .zip (tanpa kompresi) dari daftar entri { name, blob }.
+   * Mengembalikan Promise<Blob> bertipe application/zip.
+   */
+  async function createZip(entries) {
+    const encoder = new TextEncoder();
+    const { time, dateVal } = dosDateTime();
+    const fileParts = [];
+    const centralParts = [];
+    let offset = 0;
+
+    for (const entry of entries) {
+      const nameBytes = encoder.encode(entry.name);
+      const data = new Uint8Array(await entry.blob.arrayBuffer());
+      const crc = crc32(data);
+      const size = data.length;
+
+      const lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true);
+      lh.setUint16(4, 20, true);
+      lh.setUint16(6, 0, true);
+      lh.setUint16(8, 0, true);   // 0 = STORE (tanpa kompresi)
+      lh.setUint16(10, time, true);
+      lh.setUint16(12, dateVal, true);
+      lh.setUint32(14, crc, true);
+      lh.setUint32(18, size, true);
+      lh.setUint32(22, size, true);
+      lh.setUint16(26, nameBytes.length, true);
+      lh.setUint16(28, 0, true);
+      fileParts.push(new Uint8Array(lh.buffer), nameBytes, data);
+
+      const ch = new DataView(new ArrayBuffer(46));
+      ch.setUint32(0, 0x02014b50, true);
+      ch.setUint16(4, 20, true);
+      ch.setUint16(6, 20, true);
+      ch.setUint16(8, 0, true);
+      ch.setUint16(10, 0, true);
+      ch.setUint16(12, time, true);
+      ch.setUint16(14, dateVal, true);
+      ch.setUint32(16, crc, true);
+      ch.setUint32(20, size, true);
+      ch.setUint32(24, size, true);
+      ch.setUint16(28, nameBytes.length, true);
+      ch.setUint16(30, 0, true);
+      ch.setUint16(32, 0, true);
+      ch.setUint16(34, 0, true);
+      ch.setUint16(36, 0, true);
+      ch.setUint32(38, 0, true);
+      ch.setUint32(42, offset, true);
+      centralParts.push(new Uint8Array(ch.buffer), nameBytes);
+
+      offset += lh.buffer.byteLength + nameBytes.length + size;
+    }
+
+    const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+    const centralOffset = offset;
+
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true);
+    end.setUint16(4, 0, true);
+    end.setUint16(6, 0, true);
+    end.setUint16(8, entries.length, true);
+    end.setUint16(10, entries.length, true);
+    end.setUint32(12, centralSize, true);
+    end.setUint32(16, centralOffset, true);
+    end.setUint16(20, 0, true);
+
+    return new Blob([...fileParts, ...centralParts, new Uint8Array(end.buffer)], { type: 'application/zip' });
+  }
+
   return {
     clamp, lerp, roundTo, formatNumber,
     debounce, throttle, uid,
@@ -132,5 +256,6 @@ const Utils = (() => {
     formatFileSize, formatTime,
     computeInterlaceMath, applyPitchCorrection,
     readImageFile, isSupportedImage,
+    downloadBlob, canvasToBlob, createZip,
   };
 })();

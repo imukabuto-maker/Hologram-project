@@ -231,33 +231,50 @@
   function initRangeNumberPairs() {
     const numberInputs = Array.from(document.querySelectorAll('.input-number'));
 
+    /** Rapikan nilai ke batas min/max saat blur — dipakai field dgn ATAU tanpa slider. */
+    function clampOnBlur(numberInput, rangeInput) {
+      const min = parseFloat(numberInput.min);
+      const max = parseFloat(numberInput.max);
+      let raw = parseFloat(numberInput.value);
+      if (Number.isNaN(raw)) raw = (rangeInput && parseFloat(rangeInput.value)) || min || 0;
+      const clamped = (!Number.isNaN(min) && !Number.isNaN(max)) ? Utils.clamp(raw, min, max) : raw;
+      numberInput.value = String(clamped);
+      if (rangeInput) rangeInput.value = String(clamped);
+      updateStatusMath();
+    }
+
     numberInputs.forEach(numberInput => {
       const rangeInput = document.getElementById(`${numberInput.id}_range`);
-      if (!rangeInput) return; // beberapa field angka tidak punya pasangan slider
+
+      if (!rangeInput) {
+        // Field tanpa slider (mis. Start View, Output Width/Height, Bleed):
+        // tidak ada apa pun untuk disinkronkan saat mengetik, cukup validasi saat blur.
+        numberInput.addEventListener('blur', () => clampOnBlur(numberInput, null));
+        return;
+      }
 
       // 'input' event membubble ke #paramForm, jadi cukup satu listener di
       // bawah (initRangeNumberPairs -> form listener) untuk updateStatusMath.
-      // Handler di sini hanya bertugas menyinkronkan nilai antar pasangan.
       rangeInput.addEventListener('input', () => {
         numberInput.value = rangeInput.value;
       });
 
+      // Saat mengetik: hanya slider yang mengikuti (feedback visual real-time).
+      // Kotak angka SENGAJA tidak dipaksa berubah di sini — supaya pengguna
+      // tetap bisa mengetik nilai sementara di luar batas (mis. mengetik "7"
+      // dulu sebelum melanjutkan jadi "75", padahal batas minimum adalah 10).
       numberInput.addEventListener('input', () => {
         const min = parseFloat(numberInput.min);
         const max = parseFloat(numberInput.max);
         const raw = parseFloat(numberInput.value);
-
-        if (!Number.isNaN(min) && !Number.isNaN(max) && !Number.isNaN(raw)) {
-          const clamped = Utils.clamp(raw, min, max);
-          rangeInput.value = String(clamped);
-          // BUG FIX: sebelumnya hanya slider yang di-clamp, kotak angka
-          // tetap menampilkan nilai mentah di luar batas sehingga terlihat
-          // tidak sinkron dengan posisi slider. Sekarang keduanya disamakan.
-          if (clamped !== raw) numberInput.value = String(clamped);
-        } else if (!Number.isNaN(raw)) {
-          rangeInput.value = numberInput.value;
-        }
+        if (Number.isNaN(raw)) return; // field kosong / baru mengetik "-" dsb: biarkan dulu
+        const clamped = (!Number.isNaN(min) && !Number.isNaN(max)) ? Utils.clamp(raw, min, max) : raw;
+        rangeInput.value = String(clamped);
       });
+
+      // Baru dirapikan ke batas valid setelah pengguna selesai mengetik
+      // (meninggalkan field), bukan di setiap ketukan tombol.
+      numberInput.addEventListener('blur', () => clampOnBlur(numberInput, rangeInput));
     });
 
     // Field angka tanpa slider tetap perlu memicu update status (mis. views bila diketik langsung)
@@ -410,6 +427,7 @@
     const empty = document.getElementById('frameListEmpty');
     list.innerHTML = '';
     empty.hidden = frames.length > 0;
+    updateExportButtonsState();
 
     frames.forEach((frame, index) => {
       const li = document.createElement('li');
@@ -594,12 +612,104 @@
   }
 
   /* ============================================================ *
-   * Modal: Kalibrasi & Simpan Preset (buka/tutup saja di Tahap 1)
+   * EXPORT
+   * "Export PNG (Interlaced)" masih nonaktif — memang membutuhkan mesin
+   * interlace yang belum dibangun (Tahap 4), bukan bug. Dua tombol lain di
+   * bawah ini sudah berfungsi penuh karena hanya mengandalkan gambar asli
+   * yang sudah diupload.
+   * ============================================================ */
+  function updateExportButtonsState() {
+    const hasFrames = frames.length > 0;
+    document.getElementById('btnExportOriginal').disabled = !hasFrames;
+    document.getElementById('btnExportViewsZip').disabled = !hasFrames;
+  }
+
+  /** Gambar ulang satu frame ke kanvas sementara pada RESOLUSI ASLI (bukan versi preview yang di-downscale). */
+  function renderFrameAtFullResolution(frame) {
+    const c = document.createElement('canvas');
+    c.width = frame.width;
+    c.height = frame.height;
+    c.getContext('2d').drawImage(frame.img, 0, 0, frame.width, frame.height);
+    return c;
+  }
+
+  async function exportActiveFrameAsPNG() {
+    const frame = frames.find(f => f.id === activeFrameId) || frames[0];
+    if (!frame) {
+      toast('Belum ada gambar untuk diexport', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('btnExportOriginal');
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Mengekspor…';
+
+    try {
+      const fullCanvas = renderFrameAtFullResolution(frame);
+      const blob = await Utils.canvasToBlob(fullCanvas, 'image/png');
+      const safeName = frame.name.replace(/\.[^.]+$/, '') || 'gambar';
+      Utils.downloadBlob(blob, `${safeName}-original.png`);
+      logHistory(`Export Original PNG: ${frame.name}`);
+      toast('PNG berhasil diunduh', 'success');
+    } catch (err) {
+      console.error(err);
+      toast('Gagal mengekspor PNG', 'error');
+    } finally {
+      btn.textContent = originalLabel;
+      updateExportButtonsState();
+    }
+  }
+
+  async function exportAllViewsZip() {
+    if (frames.length === 0) {
+      toast('Belum ada gambar untuk diexport', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('btnExportViewsZip');
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+
+    try {
+      const entries = [];
+      for (let i = 0; i < frames.length; i++) {
+        btn.textContent = `Menyiapkan ${i + 1}/${frames.length}…`;
+        const frame = frames[i];
+        const fullCanvas = renderFrameAtFullResolution(frame);
+        const blob = await Utils.canvasToBlob(fullCanvas, 'image/png');
+        entries.push({ name: `view-${String(i + 1).padStart(2, '0')}.png`, blob });
+      }
+      const zipBlob = await Utils.createZip(entries);
+      Utils.downloadBlob(zipBlob, 'lenticular-views.zip');
+      logHistory(`Export ${entries.length} view sebagai ZIP`);
+      toast(`ZIP berisi ${entries.length} gambar berhasil diunduh`, 'success');
+    } catch (err) {
+      console.error(err);
+      toast('Gagal membuat file ZIP', 'error');
+    } finally {
+      btn.textContent = originalLabel;
+      updateExportButtonsState();
+    }
+  }
+
+  function initExportControls() {
+    document.getElementById('btnExportOriginal').addEventListener('click', exportActiveFrameAsPNG);
+    document.getElementById('btnExportViewsZip').addEventListener('click', exportAllViewsZip);
+    // btnExportPNG (Interlaced) sengaja dibiarkan disabled — tombol disabled
+    // tidak mengirim event click, jadi tidak perlu listener di sini.
+    // Alasannya sudah dijelaskan permanen lewat teks #exportInterlacedHint di HTML.
+  }
+
+  /* ============================================================ *
+   * Modal: Kalibrasi & Simpan Preset
    * ============================================================ */
   function initModals() {
     bindModal('modalCalibration', 'btnCalibration', 'closeCalibrationModal');
     document.getElementById('btnOpenCalibrationWizard').addEventListener('click', () => {
+      wizardStep = 1;
       openModal('modalCalibration');
+      renderWizardStep();
     });
 
     bindModal('modalSavePreset', 'btnSavePreset', 'closeSavePresetModal');
@@ -615,9 +725,251 @@
       closeModal('modalSavePreset');
     });
 
-    document.getElementById('wizardNext').addEventListener('click', () => {
-      toast('Wizard kalibrasi akan diimplementasikan pada Tahap 6');
+    document.getElementById('wizardNext').addEventListener('click', handleWizardNext);
+    document.getElementById('wizardBack').addEventListener('click', handleWizardBack);
+  }
+
+  /* ============================================================ *
+   * WIZARD KALIBRASI
+   * 4 langkah: (1) generate strip uji cetak, (2) input strip yang paling
+   * tajam menurut pengguna, (3) hitung Pitch Correction dari pilihan itu,
+   * (4) terapkan ke parameter & simpan ke Storage untuk dipakai lagi nanti.
+   * ============================================================ */
+  const WIZARD_STRIP_COUNT = 11;   // ganjil, supaya ada titik tengah (0% koreksi)
+  const WIZARD_STEP_PERCENT = 0.5; // besar langkah koreksi antar-strip (%)
+
+  let wizardStep = 1;
+  let wizardSelectedStrip = Math.ceil(WIZARD_STRIP_COUNT / 2); // default: strip tengah (0%)
+  let wizardComputedCorrection = 0;
+
+  function wizardCorrectionForStrip(stripNumber) {
+    const centerIdx = (WIZARD_STRIP_COUNT - 1) / 2;
+    return Utils.roundTo((stripNumber - 1 - centerIdx) * WIZARD_STEP_PERCENT, 2);
+  }
+
+  /** Gambar pola uji: beberapa "strip" garis halus dengan pitch sedikit berbeda per strip. */
+  function drawCalibrationStrip(canvas) {
+    const lensPitchMm = parseFloat(document.getElementById('paramLensPitch').value) || 0.635;
+    const dpi = parseFloat(document.getElementById('paramOutputDPI').value) || 300;
+
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    const labelH = 32;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+
+    const bandWidth = w / WIZARD_STRIP_COUNT;
+
+    for (let i = 0; i < WIZARD_STRIP_COUNT; i++) {
+      const correctionPct = wizardCorrectionForStrip(i + 1);
+      const correctedPitchMm = Utils.applyPitchCorrection(lensPitchMm, correctionPct);
+      const pitchPx = Math.max(2, Utils.mmToPx(correctedPitchMm, dpi));
+      const bandX = i * bandWidth;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(bandX, 0, bandWidth, h - labelH);
+      ctx.clip();
+      ctx.strokeStyle = '#14161c';
+      ctx.lineWidth = Math.max(1, pitchPx * 0.22);
+      for (let x = bandX; x < bandX + bandWidth; x += pitchPx) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h - labelH);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      const isCenter = (i + 1) === Math.ceil(WIZARD_STRIP_COUNT / 2);
+      ctx.fillStyle = isCenter ? '#38d0d6' : '#3a3f4c';
+      ctx.fillRect(bandX, h - labelH, bandWidth - 1, labelH);
+
+      ctx.fillStyle = isCenter ? '#0d0f13' : '#e8eaef';
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 13px "IBM Plex Mono", monospace';
+      ctx.fillText(String(i + 1), bandX + bandWidth / 2, h - 17);
+      ctx.font = '9px "IBM Plex Mono", monospace';
+      ctx.fillText(`${correctionPct >= 0 ? '+' : ''}${correctionPct.toFixed(1)}%`, bandX + bandWidth / 2, h - 5);
+    }
+  }
+
+  function renderWizardStep() {
+    document.querySelectorAll('#wizardSteps li').forEach(li => {
+      li.classList.toggle('is-active', Number(li.dataset.step) === wizardStep);
     });
+    document.getElementById('wizardBack').disabled = wizardStep === 1;
+    document.getElementById('wizardNext').textContent = wizardStep === 4 ? 'Terapkan & Simpan' : 'Lanjut →';
+
+    const panel = document.getElementById('wizardPanel');
+    panel.innerHTML = '';
+
+    if (wizardStep === 1) panel.appendChild(buildWizardStep1());
+    else if (wizardStep === 2) panel.appendChild(buildWizardStep2());
+    else if (wizardStep === 3) panel.appendChild(buildWizardStep3());
+    else panel.appendChild(buildWizardStep4());
+  }
+
+  function buildWizardStep1() {
+    const wrap = document.createElement('div');
+
+    const info = document.createElement('p');
+    info.className = 'empty-hint';
+    info.style.textAlign = 'left';
+    info.textContent = 'Cetak pola di bawah ini pada printer & bahan yang sama dengan proyek lenticular Anda, lalu tempelkan lembar lensa lenticular fisik di atasnya. Perhatikan strip nomor berapa yang garisnya terlihat paling tajam/hitam pekat (bukan buram/pudar).';
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 860;
+    canvas.height = 200;
+    canvas.style.width = '100%';
+    canvas.style.height = 'auto';
+    canvas.style.borderRadius = '6px';
+    canvas.style.border = '1px solid var(--border-subtle)';
+    drawCalibrationStrip(canvas);
+
+    const btnRow = document.createElement('div');
+    btnRow.className = 'btn-row';
+    const btnDownload = document.createElement('button');
+    btnDownload.type = 'button';
+    btnDownload.className = 'btn btn-secondary';
+    btnDownload.textContent = 'Unduh Strip (PNG)';
+    btnDownload.addEventListener('click', () => {
+      canvas.toBlob(blob => Utils.downloadBlob(blob, 'kalibrasi-strip-lenticular.png'));
+    });
+    btnRow.appendChild(btnDownload);
+
+    wrap.appendChild(info);
+    wrap.appendChild(canvas);
+    wrap.appendChild(btnRow);
+    return wrap;
+  }
+
+  function buildWizardStep2() {
+    const wrap = document.createElement('div');
+
+    const info = document.createElement('p');
+    info.className = 'empty-hint';
+    info.style.textAlign = 'left';
+    info.textContent = 'Masukkan nomor strip yang tadi terlihat paling tajam di bawah lensa lenticular fisik Anda.';
+
+    const row = document.createElement('div');
+    row.className = 'field-row';
+    const label = document.createElement('label');
+    label.setAttribute('for', 'wizardStripInput');
+    label.textContent = `Nomor strip paling tajam (1–${WIZARD_STRIP_COUNT})`;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.id = 'wizardStripInput';
+    input.className = 'input-number';
+    input.style.width = '100%';
+    input.min = '1';
+    input.max = String(WIZARD_STRIP_COUNT);
+    input.step = '1';
+    input.value = String(wizardSelectedStrip);
+
+    const preview = document.createElement('p');
+    preview.className = 'empty-hint';
+    preview.style.textAlign = 'left';
+    const updatePreview = () => {
+      const v = Utils.clamp(parseInt(input.value, 10) || wizardSelectedStrip, 1, WIZARD_STRIP_COUNT);
+      preview.textContent = `≈ Pitch Correction ${wizardCorrectionForStrip(v) >= 0 ? '+' : ''}${wizardCorrectionForStrip(v)}%`;
+    };
+    input.addEventListener('input', updatePreview);
+    updatePreview();
+
+    row.appendChild(label);
+    row.appendChild(input);
+    wrap.appendChild(info);
+    wrap.appendChild(row);
+    wrap.appendChild(preview);
+    return wrap;
+  }
+
+  function buildWizardStep3() {
+    // Ambil nilai dari step 2 sebelum menampilkan hasil hitung.
+    const input = document.getElementById('wizardStripInput');
+    if (input) {
+      wizardSelectedStrip = Utils.clamp(parseInt(input.value, 10) || wizardSelectedStrip, 1, WIZARD_STRIP_COUNT);
+    }
+    wizardComputedCorrection = wizardCorrectionForStrip(wizardSelectedStrip);
+
+    const lensPitchMm = parseFloat(document.getElementById('paramLensPitch').value) || 0.635;
+    const correctedPitch = Utils.applyPitchCorrection(lensPitchMm, wizardComputedCorrection);
+
+    const wrap = document.createElement('div');
+    const info = document.createElement('p');
+    info.className = 'empty-hint';
+    info.style.textAlign = 'left';
+    info.textContent = `Berdasarkan strip #${wizardSelectedStrip} yang dipilih:`;
+
+    const table = document.createElement('div');
+    table.style.display = 'flex';
+    table.style.flexDirection = 'column';
+    table.style.gap = '8px';
+
+    const rows = [
+      ['Pitch Correction', `${wizardComputedCorrection >= 0 ? '+' : ''}${wizardComputedCorrection}%`],
+      ['Lens Pitch semula', `${Utils.roundTo(lensPitchMm, 3)} mm`],
+      ['Lens Pitch terkoreksi', `${Utils.roundTo(correctedPitch, 3)} mm`],
+    ];
+    rows.forEach(([k, v]) => {
+      const r = document.createElement('div');
+      r.className = 'field-row toggle-row';
+      const kEl = document.createElement('span');
+      kEl.textContent = k;
+      kEl.style.color = 'var(--text-secondary)';
+      const vEl = document.createElement('span');
+      vEl.textContent = v;
+      vEl.style.fontFamily = 'var(--font-mono)';
+      vEl.style.color = 'var(--accent-cyan)';
+      r.appendChild(kEl);
+      r.appendChild(vEl);
+      table.appendChild(r);
+    });
+
+    wrap.appendChild(info);
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  function buildWizardStep4() {
+    const wrap = document.createElement('div');
+    const info = document.createElement('p');
+    info.className = 'empty-hint';
+    info.style.textAlign = 'left';
+    info.textContent = `Klik "Terapkan & Simpan" untuk mengisi Pitch Correction (${wizardComputedCorrection >= 0 ? '+' : ''}${wizardComputedCorrection}%) ke parameter, dan menyimpan kalibrasi ini agar bisa dipakai lagi di sesi berikutnya.`;
+    wrap.appendChild(info);
+    return wrap;
+  }
+
+  function handleWizardNext() {
+    if (wizardStep < 4) {
+      wizardStep++;
+      renderWizardStep();
+      return;
+    }
+    // Step 4: terapkan hasil & simpan
+    const pcInput = document.getElementById('paramPitchCorrection');
+    const pcRange = document.getElementById('paramPitchCorrection_range');
+    const clamped = Utils.clamp(wizardComputedCorrection, parseFloat(pcInput.min), parseFloat(pcInput.max));
+    pcInput.value = String(clamped);
+    pcRange.value = String(clamped);
+    updateStatusMath();
+
+    const lensPitchMm = parseFloat(document.getElementById('paramLensPitch').value) || 0.635;
+    Storage.setCalibration({ lensPitchMm, pitchCorrectionPercent: clamped, savedAt: Date.now() });
+
+    logHistory(`Kalibrasi disimpan (Pitch Correction ${clamped >= 0 ? '+' : ''}${clamped}%)`);
+    toast('Kalibrasi diterapkan ke Pitch Correction & disimpan', 'success');
+
+    closeModal('modalCalibration');
+    wizardStep = 1;
+  }
+
+  function handleWizardBack() {
+    if (wizardStep === 1) return;
+    wizardStep--;
+    renderWizardStep();
   }
 
   function bindModal(modalId, openBtnId, closeBtnId) {
@@ -783,6 +1135,7 @@
     initDropzones();
     initMiscStubs();
     initSimulationControls();
+    initExportControls();
     initResizeHandling();
     initMobileTabbar();
     renderFrameList();
