@@ -41,6 +41,7 @@ const Preview = (() => {
   let viewPos = 0;        // posisi pandang aktual yang dirender (0..numViews-1)
   let viewPosTarget = 0;  // target posisi pandang (di-lerp ke viewPos supaya halus)
   let zoomDistance = 2.4; // jarak kamera dasar (semakin kecil = semakin zoom)
+  let zoomIsCustom = false; // true setelah pengguna pinch/scroll manual (mencegah auto-refit menimpanya)
   let panX = 0, panY = 0;
 
   let running = false;
@@ -173,16 +174,40 @@ const Preview = (() => {
     viewPos = 0;
     viewPosTarget = 0;
     panX = 0; panY = 0;
+    zoomIsCustom = false;
+    updateCameraAspectFromCanvas(); // BUG FIX: pastikan aspect rasio sudah benar SEBELUM menghitung fit
     fitCameraToPlane();
     return true;
   }
 
-  /** Hitung jarak kamera dasar agar plane memenuhi area kanvas dengan rapi. */
+  /** Perbarui aspect rasio kamera dari ukuran kanvas yang sesungguhnya saat ini. */
+  function updateCameraAspectFromCanvas() {
+    if (!camera || !canvasEl) return;
+    const w = canvasEl.clientWidth || 1;
+    const h = canvasEl.clientHeight || 1;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+
+  /**
+   * Hitung jarak kamera agar plane memenuhi area kanvas dengan rapi.
+   * BUG FIX: sebelumnya hanya menghitung fit berdasarkan TINGGI plane
+   * ditambah margin 35% — pada kanvas yang tidak persegi (hampir selalu
+   * terjadi di HP), ini membuat gambar tampak jauh lebih kecil dari yang
+   * seharusnya. Sekarang dihitung jarak yang dibutuhkan untuk memenuhi
+   * LEBAR dan TINGGI plane masing-masing, lalu diambil yang lebih besar
+   * (supaya gambar landscape maupun portrait tetap pas tanpa terpotong),
+   * dengan margin yang jauh lebih realistis (4%, bukan 35%).
+   */
   function fitCameraToPlane() {
     if (!camera) return;
     const fovRad = THREE.MathUtils.degToRad(camera.fov);
-    const targetHeight = 1; // tinggi plane dalam unit world = 1
-    zoomDistance = (targetHeight / 2) / Math.tan(fovRad / 2) * 1.35;
+    const camAspect = camera.aspect || 1;
+
+    const distForHeight = (1 / 2) / Math.tan(fovRad / 2);
+    const distForWidth = (planeAspect / 2) / (Math.tan(fovRad / 2) * camAspect);
+
+    zoomDistance = Math.max(distForHeight, distForWidth) * 1.04;
     camera.position.set(panX, panY, zoomDistance);
     camera.lookAt(0, 0, 0);
   }
@@ -233,10 +258,11 @@ const Preview = (() => {
     const h = canvasEl.clientHeight || 1;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(w, h, false);
-    if (camera) {
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-    }
+    updateCameraAspectFromCanvas();
+    // Auto-refit mengikuti perubahan ukuran layar (mis. rotasi iPhone) —
+    // tapi HANYA selama pengguna belum melakukan zoom manual sendiri,
+    // supaya tidak menimpa pinch/scroll zoom yang sedang dipakai pengguna.
+    if (!zoomIsCustom && mesh) fitCameraToPlane();
   }
 
   function start() {
@@ -316,7 +342,8 @@ const Preview = (() => {
         const mid = midpoint(pts[0], pts[1]);
         if (lastPinchDist) {
           const scaleDelta = dist / lastPinchDist;
-          zoomDistance = Utils.clamp(zoomDistance / scaleDelta, 0.8, 6);
+          zoomDistance = Utils.clamp(zoomDistance / scaleDelta, 0.5, 12);
+          zoomIsCustom = true;
         }
         if (lastPanMid) {
           panX = Utils.clamp(panX - (mid.x - lastPanMid.x) * 0.004, -1, 1);
@@ -351,7 +378,8 @@ const Preview = (() => {
     // Scroll wheel = zoom (desktop)
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      zoomDistance = Utils.clamp(zoomDistance * (1 + e.deltaY * 0.001), 0.8, 6);
+      zoomDistance = Utils.clamp(zoomDistance * (1 + e.deltaY * 0.001), 0.5, 12);
+      zoomIsCustom = true;
     }, { passive: false });
   }
 

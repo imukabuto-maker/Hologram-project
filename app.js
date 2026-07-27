@@ -620,8 +620,18 @@
    * ============================================================ */
   function updateExportButtonsState() {
     const hasFrames = frames.length > 0;
+    const hasEnoughForInterlace = frames.length >= 2;
+
     document.getElementById('btnExportOriginal').disabled = !hasFrames;
     document.getElementById('btnExportViewsZip').disabled = !hasFrames;
+
+    const interlaceBtn = document.getElementById('btnExportPNG');
+    const hint = document.getElementById('exportInterlacedHint');
+    interlaceBtn.disabled = !hasEnoughForInterlace;
+    interlaceBtn.title = hasEnoughForInterlace ? '' : 'Upload minimal 2 gambar/view untuk mengaktifkan';
+    hint.textContent = hasEnoughForInterlace
+      ? 'Hasil sudah di-interlace sesuai parameter Lensa, Kalibrasi & Urutan View di panel kanan.'
+      : 'Upload minimal 2 gambar/view untuk mengaktifkan export interlaced.';
   }
 
   /** Gambar ulang satu frame ke kanvas sementara pada RESOLUSI ASLI (bukan versi preview yang di-downscale). */
@@ -696,9 +706,61 @@
   function initExportControls() {
     document.getElementById('btnExportOriginal').addEventListener('click', exportActiveFrameAsPNG);
     document.getElementById('btnExportViewsZip').addEventListener('click', exportAllViewsZip);
-    // btnExportPNG (Interlaced) sengaja dibiarkan disabled — tombol disabled
-    // tidak mengirim event click, jadi tidak perlu listener di sini.
-    // Alasannya sudah dijelaskan permanen lewat teks #exportInterlacedHint di HTML.
+    document.getElementById('btnExportPNG').addEventListener('click', exportInterlacedPNG);
+  }
+
+  /** Kumpulkan seluruh parameter dari form panel kanan menjadi satu objek untuk Interlace.run(). */
+  function collectInterlaceParamsFromForm() {
+    return {
+      lpi: parseFloat(document.getElementById('paramLPI').value) || 60,
+      outputDPI: parseFloat(document.getElementById('paramOutputDPI').value) || 300,
+      numberOfViews: parseInt(document.getElementById('paramViews').value, 10) || frames.length,
+      lensDirection: document.getElementById('paramLensDir').value,
+      pitchCorrectionPercent: parseFloat(document.getElementById('paramPitchCorrection').value) || 0,
+      angleCorrectionDeg: parseFloat(document.getElementById('paramAngleCorrection').value) || 0,
+      subpixelOffsetPx: parseFloat(document.getElementById('paramSubpixelOffset').value) || 0,
+      centerOffsetPx: parseFloat(document.getElementById('paramCenterOffset').value) || 0,
+      startView: parseInt(document.getElementById('paramStartView').value, 10) || 1,
+      reverseView: document.getElementById('paramReverseView').checked,
+      mirror: document.getElementById('paramMirror').checked,
+      flip: document.getElementById('paramFlip').checked,
+      outputWidthMm: parseFloat(document.getElementById('paramOutputWidth').value) || 100,
+      outputHeightMm: parseFloat(document.getElementById('paramOutputHeight').value) || 150,
+      bleedMm: parseFloat(document.getElementById('paramBleed').value) || 0,
+    };
+  }
+
+  async function exportInterlacedPNG() {
+    if (frames.length < 2) {
+      toast('Upload minimal 2 gambar/view untuk export interlaced', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('btnExportPNG');
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+
+    try {
+      const params = collectInterlaceParamsFromForm();
+      btn.textContent = 'Meng-interlace… 0%';
+
+      const resultCanvas = await Interlace.run(frames, params, (pct) => {
+        btn.textContent = `Meng-interlace… ${pct}%`;
+      });
+
+      btn.textContent = 'Menyiapkan file…';
+      const blob = await Utils.canvasToBlob(resultCanvas, 'image/png');
+      Utils.downloadBlob(blob, 'lenticular-interlaced.png');
+
+      logHistory(`Export Interlaced PNG (${params.numberOfViews} view, ${resultCanvas.width}×${resultCanvas.height}px)`);
+      toast('PNG hasil interlace berhasil diunduh', 'success');
+    } catch (err) {
+      console.error(err);
+      toast(err.message || 'Gagal membuat interlace', 'error');
+    } finally {
+      btn.textContent = originalLabel;
+      updateExportButtonsState();
+    }
   }
 
   /* ============================================================ *
