@@ -143,14 +143,17 @@
           enterSimulationMode();
         } else {
           webglCanvas.hidden = true;
-          simEmptyState.hidden = true;
           Preview.stop();
           mainCanvas.hidden = false;
-          renderActiveFrame(); // pastikan mode Original menampilkan frame aktif lagi (mis. setelah dari simulasi)
-        }
 
-        // TODO (Tahap 4): render hasil interlace sungguhan saat mode === 'interlaced'.
-        // Untuk saat ini mode Interlaced menampilkan frame aktif yang sama seperti Original.
+          if (mode === 'interlaced') {
+            emptyState.hidden = true; // simEmptyState yang mengambil alih pesan bila frame belum cukup
+            renderInterlacedOrMessage();
+          } else {
+            simEmptyState.hidden = true;
+            renderActiveFrame(); // pastikan mode Original menampilkan frame aktif lagi (mis. setelah dari simulasi)
+          }
+        }
       });
     });
   }
@@ -169,7 +172,10 @@
 
     if (frames.length < 2) {
       webglCanvas.hidden = true;
-      simEmptyState.hidden = false;
+      setInsufficientFramesMessage(
+        'Simulasi butuh minimal 2 gambar',
+        'Upload minimal 2 gambar/view dari panel kiri untuk mengaktifkan simulasi lenticular interaktif.'
+      );
       return;
     }
 
@@ -178,7 +184,10 @@
 
     const ok = Preview.setFrames(frames.map(f => f.img));
     if (!ok) {
-      simEmptyState.hidden = false;
+      setInsufficientFramesMessage(
+        'Simulasi butuh minimal 2 gambar',
+        'Upload minimal 2 gambar/view dari panel kiri untuk mengaktifkan simulasi lenticular interaktif.'
+      );
       webglCanvas.hidden = true;
       return;
     }
@@ -189,6 +198,71 @@
     // Tombol gyro hanya relevan di perangkat yang mendukung sensor orientasi
     // (mis. iPhone). Di desktop tanpa sensor, tombol ini tetap disembunyikan.
     gyroBtn.hidden = !Preview.hasGyroSupport();
+  }
+
+  /** Setel judul+teks pesan "frame belum cukup" (elemen ini dipakai bersama oleh mode Simulasi & Interlaced). */
+  function setInsufficientFramesMessage(title, body) {
+    const simEmptyState = document.getElementById('simEmptyState');
+    simEmptyState.querySelector('h3').textContent = title;
+    simEmptyState.querySelector('p').textContent = body;
+    simEmptyState.hidden = false;
+  }
+
+  /**
+   * Tampilkan pratinjau interlace REALTIME di tab "Interlaced" — inilah yang
+   * membuat perubahan parameter (LPI, Pitch Correction, Angle Correction,
+   * Subpixel/Center Offset, Views, Start View, Reverse, Mirror, Flip) benar-
+   * benar terlihat efeknya di layar, bukan cuma dipakai diam-diam saat export.
+   * Dijalankan di resolusi rendah (DPI diturunkan) supaya terasa ringan.
+   */
+  let interlacedPreviewToken = 0; // membatalkan hasil render yang sudah usang bila parameter berubah lagi dengan cepat
+
+  async function renderInterlacedPreview() {
+    const mainCanvas = document.getElementById('mainCanvas');
+    const myToken = ++interlacedPreviewToken;
+
+    try {
+      const params = collectInterlaceParamsFromForm();
+      // Preview cepat: DPI diturunkan drastis (tetap proporsional) supaya realtime terasa ringan di HP.
+      const previewParams = { ...params, outputDPI: Math.min(params.outputDPI, 96) };
+
+      const resultCanvas = await Interlace.run(frames, previewParams);
+      if (myToken !== interlacedPreviewToken) return; // parameter sudah berubah lagi, buang hasil basi ini
+
+      const ctx = mainCanvas.getContext('2d');
+      mainCanvas.width = resultCanvas.width;
+      mainCanvas.height = resultCanvas.height;
+      ctx.clearRect(0, 0, mainCanvas.width, mainCanvas.height);
+      ctx.drawImage(resultCanvas, 0, 0);
+
+      const dimsLabel = `${resultCanvas.width} × ${resultCanvas.height} px (pratinjau)`;
+      document.getElementById('statusImageDims').textContent = dimsLabel;
+      document.getElementById('mStatusImageDims').textContent = dimsLabel;
+      requestAnimationFrame(zoomFitToStage);
+    } catch (err) {
+      console.error(err);
+      toast('Gagal membuat pratinjau interlace', 'error');
+    }
+  }
+
+  /** Panggil ini setiap kali masuk tab Interlaced ATAU parameter/frame berubah saat tab itu aktif. */
+  function renderInterlacedOrMessage() {
+    if (frames.length < 2) {
+      setInsufficientFramesMessage(
+        'Butuh minimal 2 gambar',
+        'Upload minimal 2 gambar/view untuk melihat pratinjau hasil interlace secara realtime.'
+      );
+      document.getElementById('mainCanvas').width = 0;
+      document.getElementById('mainCanvas').height = 0;
+      return;
+    }
+    document.getElementById('simEmptyState').hidden = true;
+    renderInterlacedPreview();
+  }
+
+  /** Bila sedang di tab Interlaced, refresh pratinjaunya (dipanggil saat parameter/frame berubah). */
+  function refreshInterlacedPreviewIfActive() {
+    if (appEl.dataset.mode === 'interlaced') renderInterlacedOrMessage();
   }
 
   /** Bila sedang berada di mode simulasi, muat ulang tekstur (dipanggil saat frame berubah). */
@@ -217,6 +291,7 @@
       if (appEl.dataset.mode === 'simulation') {
         Preview.setOrientation(orientation); // sumbu drag/tilt ikut berubah tanpa perlu reload tekstur
       }
+      refreshInterlacedPreviewIfActive();
     }
 
     chips.forEach(chip => {
@@ -279,6 +354,7 @@
 
     // Field angka tanpa slider tetap perlu memicu update status (mis. views bila diketik langsung)
     document.getElementById('paramForm').addEventListener('input', updateStatusMath);
+    document.getElementById('paramForm').addEventListener('input', Utils.debounce(refreshInterlacedPreviewIfActive, 250));
   }
 
   /* ============================================================ *
@@ -504,6 +580,7 @@
     renderFrameList();
     logHistory('Mengurutkan ulang daftar view');
     refreshSimulationIfActive();
+    refreshInterlacedPreviewIfActive();
   }
 
   function removeFrame(id) {
@@ -519,6 +596,7 @@
     renderActiveFrame();
     logHistory(`Menghapus "${removed.name}"`);
     refreshSimulationIfActive();
+    refreshInterlacedPreviewIfActive();
   }
 
   function clearFrames() {
@@ -528,6 +606,7 @@
     renderFrameList();
     renderActiveFrame();
     refreshSimulationIfActive();
+    refreshInterlacedPreviewIfActive();
   }
 
   /** Terima FileList/array File (dari input atau drag-drop), validasi, dan tambahkan sebagai frame baru. */
@@ -573,6 +652,7 @@
       logHistory(`Menambahkan ${addedCount} gambar`);
       toast(`${addedCount} gambar berhasil ditambahkan`, 'success');
       refreshSimulationIfActive();
+      refreshInterlacedPreviewIfActive();
     });
   }
 

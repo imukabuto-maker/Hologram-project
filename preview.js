@@ -3,21 +3,28 @@
  * ---------------------------------------------------------------------------
  * Simulasi lenticular interaktif menggunakan Three.js (WebGL).
  *
- * Pendekatan: alih-alih menginterlace pixel sungguhan (itu tugas
- * interlace.js untuk file cetak, Tahap 4), simulasi di layar cukup
- * melakukan *blend* halus antar-tekstur (gambar/view) berdasarkan "posisi
- * pandang" (uViewPos) yang dikendalikan oleh:
- *   - drag / touch 1 jari  -> mengubah sudut pandang (rotate)
- *   - device tilt (gyroscope, khusus iOS/Android yang mendukung)
- *   - scroll wheel / pinch 2 jari -> zoom
- *   - shift+drag (desktop) / geser 2 jari (mobile) -> pan
+ * PENDEKATAN KAMERA: memakai OrthographicCamera, BUKAN PerspectiveCamera.
+ * Versi sebelumnya memakai kamera perspektif dan menghitung "jarak kamera"
+ * lewat trigonometri (fov, tan, dst) supaya plane terlihat penuh — pendekatan
+ * itu ternyata rapuh (gampang salah begitu aspect rasio kanvas berubah) dan
+ * masih menghasilkan gambar yang tampak kecil di beberapa kasus nyata.
+ *
+ * Dengan kamera ortografis, ukuran tampilan TIDAK bergantung pada "jarak"
+ * kamera sama sekali — ia bergantung langsung pada batas frustum
+ * (left/right/top/bottom) yang kita tentukan sendiri dalam unit dunia yang
+ * SAMA dengan ukuran plane. Ini jauh lebih mudah dijamin benar: kita hitung
+ * langsung "seberapa besar frustum minimal supaya plane (planeAspect x 1)
+ * muat di dalamnya", tanpa trigonometri sama sekali.
+ *
+ * Rotasi 3D (kesan "kartu dimiringkan") tetap didapat dari memutar MESH-nya
+ * (mesh.rotation.y / .x) — perputaran vertex itu tetap terlihat benar di
+ * bawah proyeksi ortografis, hanya tanpa efek perspektif konvergensi (untuk
+ * simulasi lenticular ini justru lebih mendekati kenyataan, karena lensa
+ * fisik juga tidak punya efek perspektif seperti itu).
  *
  * Renderer WebGL sengaja dibuat SEKALI dan dipakai ulang (bukan dibuat
  * ulang setiap pindah tab mode) karena Safari iOS membatasi jumlah konteks
- * WebGL aktif secara bersamaan — kalau renderer baru dibuat setiap kali
- * masuk mode simulasi, setelah beberapa kali gonta-ganti tab, konteks bisa
- * habis dan kanvas jadi putih/rusak. Karena itu API-nya start()/stop()
- * (pause/resume render loop), bukan init()/destroy() penuh.
+ * WebGL aktif secara bersamaan.
  * ---------------------------------------------------------------------------
  */
 const Preview = (() => {
@@ -25,6 +32,7 @@ const Preview = (() => {
   const MAX_SHADER_VIEWS = 8; // batas praktis jumlah sampler2D pada fragment shader
   const MAX_TILT_DEG = 30;    // rentang tilt (drag maupun gyro) yang dipetakan ke seluruh rentang view
   const MAX_ROTATE_DEG = 18;  // rotasi visual mesh maksimum, untuk kesan "kartu dimiringkan"
+  const FIT_MARGIN = 1.06;    // sedikit padding (6%) di sekeliling gambar supaya tidak mepet tepi
 
   let renderer = null;
   let scene = null;
@@ -35,14 +43,17 @@ const Preview = (() => {
 
   let textures = [];
   let numViews = 0;
-  let planeAspect = 1;
+  let planeAspect = 1; // lebar/tinggi gambar (world unit plane selalu tinggi=1)
 
   let orientationMode = 'vertical'; // 'vertical' lensa -> drag horizontal; 'horizontal' lensa -> drag vertikal
   let viewPos = 0;        // posisi pandang aktual yang dirender (0..numViews-1)
   let viewPosTarget = 0;  // target posisi pandang (di-lerp ke viewPos supaya halus)
-  let zoomDistance = 2.4; // jarak kamera dasar (semakin kecil = semakin zoom)
+
+  let camAspect = 1;       // lebar/tinggi KANVAS (bukan gambar) — sumber kebenaran untuk framing
+  let baseFrustumH = 1;    // tinggi frustum dasar (world unit) hasil fit, SEBELUM dikalikan zoomFactor
+  let zoomFactor = 1;      // <1 = zoom in, >1 = zoom out — dikalikan ke baseFrustumH
   let zoomIsCustom = false; // true setelah pengguna pinch/scroll manual (mencegah auto-refit menimpanya)
-  let panX = 0, panY = 0;
+  let panX = 0, panY = 0;   // pergeseran kamera (world unit), untuk gestur pan
 
   let running = false;
   let rafId = null;
@@ -68,8 +79,10 @@ const Preview = (() => {
     renderer.setClearColor(0x000000, 0);
 
     scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-    camera.position.set(0, 0, zoomDistance);
+    // Batas frustum awal sembarang (1,-1,...) — akan langsung dihitung ulang
+    // yang benar oleh computeBaseFrustum() begitu setFrames() dipanggil.
+    camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+    camera.position.set(0, 0, 5); // jarak z tidak memengaruhi ukuran tampilan pada kamera ortografis
     scene.add(camera);
 
     attachInputHandlers(canvas);
@@ -174,42 +187,41 @@ const Preview = (() => {
     viewPos = 0;
     viewPosTarget = 0;
     panX = 0; panY = 0;
+    zoomFactor = 1;
     zoomIsCustom = false;
-    updateCameraAspectFromCanvas(); // BUG FIX: pastikan aspect rasio sudah benar SEBELUM menghitung fit
-    fitCameraToPlane();
+
+    updateCameraAspectFromCanvas();
+    computeBaseFrustum();
     return true;
   }
 
-  /** Perbarui aspect rasio kamera dari ukuran kanvas yang sesungguhnya saat ini. */
+  /** Perbarui rasio lebar/tinggi KANVAS (bukan gambar) dari ukuran elemen yang sesungguhnya saat ini. */
   function updateCameraAspectFromCanvas() {
-    if (!camera || !canvasEl) return;
+    if (!canvasEl) return;
     const w = canvasEl.clientWidth || 1;
     const h = canvasEl.clientHeight || 1;
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+    camAspect = w / h;
   }
 
   /**
-   * Hitung jarak kamera agar plane memenuhi area kanvas dengan rapi.
-   * BUG FIX: sebelumnya hanya menghitung fit berdasarkan TINGGI plane
-   * ditambah margin 35% — pada kanvas yang tidak persegi (hampir selalu
-   * terjadi di HP), ini membuat gambar tampak jauh lebih kecil dari yang
-   * seharusnya. Sekarang dihitung jarak yang dibutuhkan untuk memenuhi
-   * LEBAR dan TINGGI plane masing-masing, lalu diambil yang lebih besar
-   * (supaya gambar landscape maupun portrait tetap pas tanpa terpotong),
-   * dengan margin yang jauh lebih realistis (4%, bukan 35%).
+   * Hitung tinggi frustum dasar (sebelum zoom) supaya plane (planeAspect x 1
+   * unit dunia) muat penuh di dalam kanvas, dengan sedikit margin. Ini
+   * menggantikan pendekatan lama yang menghitung "jarak kamera" — di sini
+   * kita langsung menghitung UKURAN yang dibutuhkan, jauh lebih sulit salah.
+   *
+   * Logika "contain-fit": bandingkan rasio gambar dengan rasio kanvas.
+   *  - Kalau kanvas relatif lebih lebar dari gambar (camAspect >= planeAspect):
+   *    tinggi plane (1 unit) yang membatasi -> frustum tinggi = 1.
+   *  - Kalau kanvas relatif lebih sempit dari gambar (camAspect < planeAspect):
+   *    lebar plane yang membatasi -> frustum tinggi = planeAspect / camAspect.
    */
-  function fitCameraToPlane() {
-    if (!camera) return;
-    const fovRad = THREE.MathUtils.degToRad(camera.fov);
-    const camAspect = camera.aspect || 1;
-
-    const distForHeight = (1 / 2) / Math.tan(fovRad / 2);
-    const distForWidth = (planeAspect / 2) / (Math.tan(fovRad / 2) * camAspect);
-
-    zoomDistance = Math.max(distForHeight, distForWidth) * 1.04;
-    camera.position.set(panX, panY, zoomDistance);
-    camera.lookAt(0, 0, 0);
+  function computeBaseFrustum() {
+    if (camAspect >= planeAspect) {
+      baseFrustumH = 1;
+    } else {
+      baseFrustumH = planeAspect / camAspect;
+    }
+    baseFrustumH *= FIT_MARGIN;
   }
 
   function setOrientation(mode) {
@@ -242,10 +254,15 @@ const Preview = (() => {
     }
 
     if (camera) {
+      const h = baseFrustumH * zoomFactor;
+      const w = h * camAspect;
+      camera.left = -w / 2;
+      camera.right = w / 2;
+      camera.top = h / 2;
+      camera.bottom = -h / 2;
       camera.position.x = panX;
       camera.position.y = panY;
-      camera.position.z = zoomDistance;
-      camera.lookAt(0, 0, 0);
+      camera.updateProjectionMatrix();
     }
 
     renderer.render(scene, camera);
@@ -262,7 +279,7 @@ const Preview = (() => {
     // Auto-refit mengikuti perubahan ukuran layar (mis. rotasi iPhone) —
     // tapi HANYA selama pengguna belum melakukan zoom manual sendiri,
     // supaya tidak menimpa pinch/scroll zoom yang sedang dipakai pengguna.
-    if (!zoomIsCustom && mesh) fitCameraToPlane();
+    if (!zoomIsCustom && mesh) computeBaseFrustum();
   }
 
   function start() {
@@ -282,6 +299,8 @@ const Preview = (() => {
 
   /* ============================================================ *
    * Input: drag (mouse+touch via Pointer Events), pinch-zoom, pan
+   * Fungsi-fungsi inilah yang MENGUBAH SUDUT PANDANG (lihat penjelasan di
+   * bawah tentang "fungsi mana yang memengaruhi sudut perubahan gambar").
    * ============================================================ */
   function viewPosFromDelta(deltaPx, axisSizePx) {
     const degrees = (deltaPx / Math.max(1, axisSizePx)) * MAX_TILT_DEG * 2;
@@ -333,8 +352,9 @@ const Preview = (() => {
       } else if (dragMode === 'pan' && pointers.size === 1 && lastSingle) {
         const dx = e.clientX - lastSingle.x;
         const dy = e.clientY - lastSingle.y;
-        panX = Utils.clamp(panX - dx * 0.003, -1, 1);
-        panY = Utils.clamp(panY + dy * 0.003, -1, 1);
+        const scale = baseFrustumH * zoomFactor; // pan konsisten terasa di berbagai level zoom
+        panX = Utils.clamp(panX - dx * 0.003 * scale, -3, 3);
+        panY = Utils.clamp(panY + dy * 0.003 * scale, -3, 3);
         lastSingle = { x: e.clientX, y: e.clientY };
       } else if (dragMode === 'pinch' && pointers.size === 2) {
         const pts = Array.from(pointers.values());
@@ -342,12 +362,13 @@ const Preview = (() => {
         const mid = midpoint(pts[0], pts[1]);
         if (lastPinchDist) {
           const scaleDelta = dist / lastPinchDist;
-          zoomDistance = Utils.clamp(zoomDistance / scaleDelta, 0.5, 12);
+          zoomFactor = Utils.clamp(zoomFactor / scaleDelta, 0.25, 4);
           zoomIsCustom = true;
         }
         if (lastPanMid) {
-          panX = Utils.clamp(panX - (mid.x - lastPanMid.x) * 0.004, -1, 1);
-          panY = Utils.clamp(panY + (mid.y - lastPanMid.y) * 0.004, -1, 1);
+          const scale = baseFrustumH * zoomFactor;
+          panX = Utils.clamp(panX - (mid.x - lastPanMid.x) * 0.004 * scale, -3, 3);
+          panY = Utils.clamp(panY + (mid.y - lastPanMid.y) * 0.004 * scale, -3, 3);
         }
         lastPinchDist = dist;
         lastPanMid = mid;
@@ -378,7 +399,7 @@ const Preview = (() => {
     // Scroll wheel = zoom (desktop)
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      zoomDistance = Utils.clamp(zoomDistance * (1 + e.deltaY * 0.001), 0.5, 12);
+      zoomFactor = Utils.clamp(zoomFactor * (1 + e.deltaY * 0.001), 0.25, 4);
       zoomIsCustom = true;
     }, { passive: false });
   }
@@ -388,6 +409,8 @@ const Preview = (() => {
 
   /* ============================================================ *
    * Gyroscope (khusus iOS: butuh izin lewat gesture pengguna)
+   * Ini JUGA memengaruhi sudut pandang, sebagai alternatif dari drag jari —
+   * lihat handleOrientation() di bawah.
    * ============================================================ */
   function needsGyroPermission() {
     return typeof window.DeviceOrientationEvent !== 'undefined'
