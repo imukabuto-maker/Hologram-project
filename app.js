@@ -277,27 +277,30 @@
   /* ============================================================ *
    * Chip orientasi lensa (toolbar) — sinkron dengan <select> di panel kanan
    * ============================================================ */
-  function initLensOrientation() {
+  function applyLensOrientation(orientation) {
     const chips = Array.from(document.querySelectorAll('#lensOrientationToggle .chip'));
     const select = document.getElementById('paramLensDir');
     const gridOverlay = document.getElementById('lensGridOverlay');
 
-    function apply(orientation, fromChip) {
-      chips.forEach(c => c.classList.toggle('is-active', c.dataset.orientation === orientation));
-      select.value = orientation;
-      gridOverlay.classList.toggle('horizontal', orientation === 'horizontal');
-      updateStatusMath();
+    chips.forEach(c => c.classList.toggle('is-active', c.dataset.orientation === orientation));
+    select.value = orientation;
+    gridOverlay.classList.toggle('horizontal', orientation === 'horizontal');
+    updateStatusMath();
 
-      if (appEl.dataset.mode === 'simulation') {
-        Preview.setOrientation(orientation); // sumbu drag/tilt ikut berubah tanpa perlu reload tekstur
-      }
-      refreshInterlacedPreviewIfActive();
+    if (appEl.dataset.mode === 'simulation') {
+      Preview.setOrientation(orientation); // sumbu drag/tilt ikut berubah tanpa perlu reload tekstur
     }
+    refreshInterlacedPreviewIfActive();
+  }
+
+  function initLensOrientation() {
+    const chips = Array.from(document.querySelectorAll('#lensOrientationToggle .chip'));
+    const select = document.getElementById('paramLensDir');
 
     chips.forEach(chip => {
-      chip.addEventListener('click', () => apply(chip.dataset.orientation, true));
+      chip.addEventListener('click', () => applyLensOrientation(chip.dataset.orientation));
     });
-    select.addEventListener('change', () => apply(select.value, false));
+    select.addEventListener('change', () => applyLensOrientation(select.value));
   }
 
   /* ============================================================ *
@@ -862,8 +865,19 @@
         toast('Nama preset tidak boleh kosong', 'error');
         return;
       }
-      // TODO (Tahap 3): kumpulkan seluruh nilai form via Settings, lalu Storage.savePreset(name, values)
-      toast(`Penyimpanan preset "${name}" akan aktif penuh setelah Tahap 3`);
+
+      const existing = Storage.listPresets();
+      if (existing[name]) {
+        const overwrite = window.confirm(`Preset "${name}" sudah ada. Timpa dengan pengaturan saat ini?`);
+        if (!overwrite) return;
+      }
+
+      const values = Settings.toParamsObject();
+      Storage.savePreset(name, values);
+      refreshPresetDropdown(name);
+      logHistory(`Preset "${name}" disimpan`);
+      toast(`Preset "${name}" berhasil disimpan`, 'success');
+      document.getElementById('presetNameInput').value = '';
       closeModal('modalSavePreset');
     });
 
@@ -1234,13 +1248,16 @@
       return;
     }
     const ok = window.confirm(
-      'Mulai proyek baru? Semua gambar yang sudah diupload akan dihapus dari daftar.\n\n' +
-      '(Reset parameter ke default akan aktif penuh setelah Tahap 3.)'
+      'Mulai proyek baru? Semua gambar akan dihapus dan parameter akan kembali ke nilai default.'
     );
     if (!ok) return;
     clearFrames();
-    logHistory('Memulai proyek baru');
-    toast('Proyek baru dimulai — semua gambar dihapus', 'success');
+    Settings.resetToDefaults();
+    applyLensOrientation(Settings.DEFAULTS.lensDirection); // sinkronkan chip & grid overlay juga
+    updateStatusMath();
+    refreshInterlacedPreviewIfActive();
+    logHistory('Memulai proyek baru (parameter direset ke default)');
+    toast('Proyek baru dimulai — gambar dihapus & parameter direset', 'success');
   }
 
   function initMiscStubs() {
@@ -1253,11 +1270,66 @@
     });
 
     document.getElementById('btnLoadPreset').addEventListener('click', () => {
-      toast('Memuat preset akan aktif penuh setelah Tahap 3');
+      const select = document.getElementById('presetSelect');
+      const name = select.value;
+      if (!name) {
+        toast('Pilih preset yang ingin dimuat terlebih dahulu', 'error');
+        return;
+      }
+      const values = Storage.loadPreset(name);
+      if (!values) {
+        toast(`Preset "${name}" tidak ditemukan`, 'error');
+        return;
+      }
+
+      Settings.fromParamsObject(values);
+      applyLensOrientation(values.lensDirection || Settings.DEFAULTS.lensDirection); // sinkronkan chip & grid overlay
+      updateStatusMath();
+      refreshSimulationIfActive();
+      refreshInterlacedPreviewIfActive();
+      logHistory(`Preset "${name}" dimuat`);
+      toast(`Preset "${name}" diterapkan`, 'success');
     });
+
     document.getElementById('btnDeletePreset').addEventListener('click', () => {
-      toast('Menghapus preset akan aktif penuh setelah Tahap 3');
+      const select = document.getElementById('presetSelect');
+      const name = select.value;
+      if (!name) {
+        toast('Pilih preset yang ingin dihapus terlebih dahulu', 'error');
+        return;
+      }
+      const ok = window.confirm(`Hapus preset "${name}"? Tindakan ini tidak bisa dibatalkan.`);
+      if (!ok) return;
+
+      Storage.deletePreset(name);
+      refreshPresetDropdown();
+      logHistory(`Preset "${name}" dihapus`);
+      toast(`Preset "${name}" dihapus`, 'success');
     });
+  }
+
+  /** Isi ulang dropdown #presetSelect dari daftar preset tersimpan di Storage. */
+  function refreshPresetDropdown(selectName) {
+    const select = document.getElementById('presetSelect');
+    const names = Object.keys(Storage.listPresets());
+    select.innerHTML = '';
+
+    if (names.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '— Belum ada preset —';
+      select.appendChild(opt);
+      return;
+    }
+
+    names.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      select.appendChild(opt);
+    });
+
+    if (selectName && names.includes(selectName)) select.value = selectName;
   }
 
   /* ============================================================ *
@@ -1280,11 +1352,12 @@
     initExportControls();
     initResizeHandling();
     initMobileTabbar();
+    refreshPresetDropdown();
     renderFrameList();
     renderHistory();
     updateStatusMath();
 
-    console.info('[LenticularStudio] Tahap 2 (Upload Image) + mobile/simulasi siap. Menunggu konfirmasi untuk Tahap 3: Settings.');
+    console.info('[LenticularStudio] Tahap 2 (Upload) + Tahap 3 (Settings/Preset) + mobile/simulasi siap.');
   }
 
   document.addEventListener('DOMContentLoaded', init);

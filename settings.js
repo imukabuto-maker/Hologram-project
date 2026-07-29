@@ -4,17 +4,15 @@
  * Modul manajemen state parameter (single source of truth untuk seluruh
  * parameter interlace/lenticular yang ada di Panel Kanan).
  *
- * STATUS: Kerangka (Tahap 1). Berisi skema default & id field agar app.js
- * bisa menginisialisasi UI dengan nilai yang konsisten. Logika penuh
- * (get/set reaktif, validasi antar-parameter, sinkronisasi dua arah dengan
- * form, serta koneksi ke Storage untuk preset) akan diimplementasikan pada
- * Tahap 3 sesuai rencana pengerjaan bertahap.
+ * Menyediakan jembatan dua arah antara form HTML dan objek parameter polos
+ * (plain object) — inilah yang dipakai fitur Preset (app.js) untuk:
+ *   - Settings.toParamsObject()   : baca semua nilai form saat ini -> objek
+ *   - Settings.fromParamsObject() : terapkan objek -> ke semua field form
+ *   - Settings.resetToDefaults()  : kembalikan seluruh form ke nilai DEFAULTS
  *
- * Daftar tanggung jawab yang akan ditambahkan di Tahap 3:
- *   - Settings.get(key) / Settings.set(key, value)
- *   - Settings.subscribe(callback) -> dipanggil setiap ada perubahan (realtime)
- *   - Settings.toParamsObject() / Settings.fromParamsObject(obj)  (untuk preset)
- *   - Validasi silang (mis. StartView tidak boleh > NumberOfViews)
+ * Modul ini sengaja tidak menyimpan state sendiri (tidak ada variabel
+ * internal) — form HTML itu sendiri yang menjadi "sumber kebenaran" nilai
+ * saat ini, supaya tidak ada dua tempat yang bisa saling tidak sinkron.
  * ---------------------------------------------------------------------------
  */
 const Settings = (() => {
@@ -72,9 +70,60 @@ const Settings = (() => {
     cropEnabled: 'paramCropEnabled',
   };
 
+  const RANGE_SUFFIX = '_range';
+
+  /** Baca nilai satu field dari DOM, dengan tipe yang sesuai (boolean/number/string). */
+  function getFieldValue(key) {
+    const el = document.getElementById(FIELD_IDS[key]);
+    if (!el) return DEFAULTS[key];
+
+    if (el.type === 'checkbox') return el.checked;
+    if (el.tagName === 'SELECT') return el.value;
+
+    const num = parseFloat(el.value);
+    return Number.isNaN(num) ? el.value : num;
+  }
+
+  /** Tulis satu nilai ke field DOM (dan slider pasangannya bila ada). */
+  function setFieldValue(key, value) {
+    if (value === undefined || value === null) return;
+    const el = document.getElementById(FIELD_IDS[key]);
+    if (!el) return;
+
+    if (el.type === 'checkbox') {
+      el.checked = !!value;
+      return;
+    }
+
+    el.value = value;
+    const rangeEl = document.getElementById(FIELD_IDS[key] + RANGE_SUFFIX);
+    if (rangeEl) rangeEl.value = value;
+  }
+
+  /** Kumpulkan SEMUA nilai form saat ini menjadi satu objek polos (untuk disimpan sebagai preset). */
+  function toParamsObject() {
+    const obj = {};
+    Object.keys(FIELD_IDS).forEach(key => { obj[key] = getFieldValue(key); });
+    return obj;
+  }
+
+  /** Terapkan objek parameter (mis. hasil load preset) ke SEMUA field form. */
+  function fromParamsObject(obj) {
+    Object.keys(FIELD_IDS).forEach(key => setFieldValue(key, obj[key]));
+  }
+
+  /** Kembalikan seluruh form ke nilai default pabrik. */
+  function resetToDefaults() {
+    fromParamsObject(DEFAULTS);
+  }
+
   return {
     DEFAULTS,
     FIELD_IDS,
-    // TODO (Tahap 3): implementasi state reaktif penuh.
+    getFieldValue,
+    setFieldValue,
+    toParamsObject,
+    fromParamsObject,
+    resetToDefaults,
   };
 })();
