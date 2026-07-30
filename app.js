@@ -1,33 +1,25 @@
 /**
  * app.js
  * ---------------------------------------------------------------------------
- * Entry point aplikasi.
+ * Entry point aplikasi. Ringkasan status fitur saat ini:
  *
- * Tahap 1 (mekanika UI generik):
- *   - Tema terang/gelap (persisten via Storage)
- *   - Toggle panel kiri/kanan (persisten via Storage)
- *   - Tab mode preview (Original / Interlaced / Lenticular Simulation)
- *   - Chip orientasi lensa (vertikal/horizontal) + sinkron ke <select>
- *   - Sinkronisasi dua arah slider <-> input angka untuk semua parameter
- *   - Kontrol zoom kanvas (CSS transform) & toggle grid lensa
- *   - Buka/tutup modal (Kalibrasi, Simpan Preset)
- *   - Status bar realtime untuk PixelsPerLens / PixelsPerView (Utils)
- *   - Util toast notifikasi ringan
+ *   - UI generik: tema, panel kiri/kanan, tab mode, modal, toast, zoom kanvas
+ *   - Upload gambar (single & multi, klik atau drag-drop), daftar view dengan
+ *     thumbnail, reorder drag & drop, hapus per-frame
+ *   - Settings/Preset: simpan/muat/hapus preset parameter ke localStorage
+ *     (lihat settings.js untuk Settings.toParamsObject/fromParamsObject)
+ *   - Interlace Engine (interlace.js): tab "Interlaced" menampilkan pratinjau
+ *     interlace REALTIME (resolusi diturunkan) setiap parameter berubah;
+ *     Export "PNG (Interlaced)" memakai resolusi penuh sesuai form
+ *   - Simulasi lenticular interaktif (preview.js, Three.js): drag/tilt untuk
+ *     mengubah sudut pandang, pinch/scroll zoom, gyroscope iOS
+ *   - Wizard Kalibrasi 4 langkah, tersimpan via Storage.setCalibration
+ *   - Export: Original PNG, Semua View (ZIP, dibuat manual tanpa library),
+ *     PNG Interlaced
+ *   - Tampilan mobile (iPhone): tab bar bawah Sumber/Kanvas/Parameter,
+ *     safe-area, target sentuh diperbesar
  *
- * Tahap 2 (Upload Image, ditambahkan sekarang):
- *   - Frame Store: menyimpan daftar gambar/view yang diupload (single & multi)
- *   - Upload via klik dropzone maupun drag & drop ke area kanvas
- *   - Thumbnail per-view di panel kiri, bisa diklik untuk pratinjau
- *   - Reorder urutan view via drag & drop antar item daftar
- *   - Hapus per-frame, atau hapus semua lewat "Proyek Baru"
- *   - Render frame aktif ke #mainCanvas (mode Original) + zoom-to-fit otomatis
- *   - Sinkron otomatis "Number of Views" mengikuti jumlah frame terupload
- *   - Log Riwayat aktivitas yang sesungguhnya (tambah/hapus/urutkan/dsb)
- *
- * Fungsi-fungsi yang secara eksplisit dijadwalkan untuk tahap berikutnya
- * ditandai dengan komentar TODO dan, bila relevan, menampilkan toast info
- * agar jelas bagi penguji bahwa itu belum aktif — bukan tombol mati tanpa
- * penjelasan.
+ * Fungsi yang memang sengaja belum dikerjakan (bukan bug) ditandai TODO.
  * ---------------------------------------------------------------------------
  */
 (() => {
@@ -238,7 +230,7 @@
       const dimsLabel = `${resultCanvas.width} × ${resultCanvas.height} px (pratinjau)`;
       document.getElementById('statusImageDims').textContent = dimsLabel;
       document.getElementById('mStatusImageDims').textContent = dimsLabel;
-      requestAnimationFrame(zoomFitToStage);
+      requestAnimationFrame(() => zoomFitToStage(true));
     } catch (err) {
       console.error(err);
       toast('Gagal membuat pratinjau interlace', 'error');
@@ -395,8 +387,14 @@
     document.getElementById('statusZoom').textContent = pct;
   }
 
-  /** Hitung skala agar seluruh kanvas pas terlihat di area canvas-scroll, lalu terapkan. */
-  function zoomFitToStage() {
+  /**
+   * Hitung skala agar seluruh kanvas pas terlihat di area canvas-scroll, lalu terapkan.
+   * @param {boolean} [allowUpscale=false] - true untuk kanvas pratinjau yang sengaja
+   *   dibuat kecil (mis. pratinjau Interlaced dengan DPI diturunkan) sehingga BOLEH
+   *   diperbesar melebihi 100%. Default false supaya foto asli (mode Original) tidak
+   *   diperbesar melebihi resolusi native-nya (akan terlihat pecah/blur bila dipaksa).
+   */
+  function zoomFitToStage(allowUpscale) {
     const canvas = document.getElementById('mainCanvas');
     const scrollEl = document.getElementById('canvasScroll');
     if (!canvas.width || !canvas.height) {
@@ -407,8 +405,9 @@
     const padding = 40;
     const availW = Math.max(50, scrollEl.clientWidth - padding);
     const availH = Math.max(50, scrollEl.clientHeight - padding);
-    const scale = Math.min(availW / canvas.width, availH / canvas.height, 1);
-    currentZoom = Utils.clamp(Utils.roundTo(scale, 2), 0.05, 4);
+    const rawScale = Math.min(availW / canvas.width, availH / canvas.height);
+    const scale = allowUpscale ? rawScale : Math.min(rawScale, 1);
+    currentZoom = Utils.clamp(Utils.roundTo(scale, 2), 0.05, 8);
     applyZoom();
   }
 
@@ -548,7 +547,7 @@
         if (activeFrameId === frame.id) return;
         activeFrameId = frame.id;
         renderFrameList();
-        renderActiveFrame(true);
+        refreshCurrentModeView(true);
       });
 
       // Drag & drop untuk mengurutkan ulang view (urutan = urutan sudut pandang).
@@ -582,8 +581,27 @@
     frames.splice(toIdx, 0, moved);
     renderFrameList();
     logHistory('Mengurutkan ulang daftar view');
-    refreshSimulationIfActive();
-    refreshInterlacedPreviewIfActive();
+    refreshCurrentModeView();
+  }
+
+  /**
+   * Refresh tampilan sesuai TAB MODE yang sedang aktif — bukan selalu
+   * renderActiveFrame(). BUG FIX: sebelumnya menambah/hapus/klik frame
+   * selalu memanggil renderActiveFrame() (mode Original) apa adanya, tanpa
+   * peduli user sedang berada di tab Interlaced — akibatnya gambar mentah
+   * sempat "berkedip" menimpa hasil interlace sebelum ditimpa lagi oleh
+   * refreshInterlacedPreviewIfActive(), plus zoom-fit terpanggil dua kali
+   * dengan aturan upscale yang berbeda (jadi terasa "lompat").
+   */
+  function refreshCurrentModeView(fitToScreen) {
+    const mode = appEl.dataset.mode;
+    if (mode === 'simulation') {
+      refreshSimulationIfActive();
+    } else if (mode === 'interlaced') {
+      refreshInterlacedPreviewIfActive();
+    } else {
+      renderActiveFrame(fitToScreen);
+    }
   }
 
   function removeFrame(id) {
@@ -596,10 +614,8 @@
       activeFrameId = frames.length ? frames[Math.min(idx, frames.length - 1)].id : null;
     }
     renderFrameList();
-    renderActiveFrame();
     logHistory(`Menghapus "${removed.name}"`);
-    refreshSimulationIfActive();
-    refreshInterlacedPreviewIfActive();
+    refreshCurrentModeView();
   }
 
   function clearFrames() {
@@ -607,9 +623,7 @@
     frames = [];
     activeFrameId = null;
     renderFrameList();
-    renderActiveFrame();
-    refreshSimulationIfActive();
-    refreshInterlacedPreviewIfActive();
+    refreshCurrentModeView();
   }
 
   /** Terima FileList/array File (dari input atau drag-drop), validasi, dan tambahkan sebagai frame baru. */
@@ -650,12 +664,10 @@
       if (!activeFrameId) activeFrameId = frames[frames.length - addedCount].id;
 
       renderFrameList();
-      renderActiveFrame(true);
       syncViewCountToFrames();
       logHistory(`Menambahkan ${addedCount} gambar`);
       toast(`${addedCount} gambar berhasil ditambahkan`, 'success');
-      refreshSimulationIfActive();
-      refreshInterlacedPreviewIfActive();
+      refreshCurrentModeView(true);
     });
   }
 
@@ -696,10 +708,9 @@
 
   /* ============================================================ *
    * EXPORT
-   * "Export PNG (Interlaced)" masih nonaktif — memang membutuhkan mesin
-   * interlace yang belum dibangun (Tahap 4), bukan bug. Dua tombol lain di
-   * bawah ini sudah berfungsi penuh karena hanya mengandalkan gambar asli
-   * yang sudah diupload.
+   * Ketiga tombol export sudah berfungsi penuh. "Export PNG (Interlaced)"
+   * otomatis nonaktif (disabled) hanya bila frame belum cukup (<2 gambar),
+   * karena Interlace.run() butuh minimal 2 view untuk menginterlace.
    * ============================================================ */
   function updateExportButtonsState() {
     const hasFrames = frames.length > 0;
@@ -1164,7 +1175,7 @@
     const onResize = Utils.debounce(() => {
       Preview.resize();
       if (appEl.dataset.mode !== 'simulation' && frames.length) {
-        zoomFitToStage();
+        zoomFitToStage(appEl.dataset.mode === 'interlaced');
       }
     }, 150);
     window.addEventListener('resize', onResize);
@@ -1187,7 +1198,7 @@
         // Kanvas/simulasi perlu tahu ukurannya berubah begitu drawer disembunyikan/ditampilkan.
         requestAnimationFrame(() => {
           Preview.resize();
-          if (appEl.dataset.mode !== 'simulation' && frames.length) zoomFitToStage();
+          if (appEl.dataset.mode !== 'simulation' && frames.length) zoomFitToStage(appEl.dataset.mode === 'interlaced');
         });
       });
     });
