@@ -558,7 +558,7 @@ input[type="range"]::-moz-range-thumb{
 }
 .frame-item:active{ cursor: grabbing; }
 .frame-item img{ width: 34px; height: 34px; object-fit: cover; border-radius: 3px; background: var(--bg-void); flex:none; }
-.frame-item .frame-meta{ flex:1 1 auto; min-width:0; }
+.frame-item .frame-meta{ flex:1 1 0%; min-width:0; }
 .frame-item .frame-name{ font-size: 11.5px; color: var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .frame-item .frame-sub{ font-size: 10px; color: var(--text-tertiary); font-family: var(--font-mono); }
 .frame-item .frame-remove{
@@ -567,12 +567,29 @@ input[type="range"]::-moz-range-thumb{
 }
 .frame-item .frame-remove:hover{ background: var(--danger-dim); color: var(--danger); }
 
+/* Wrapper tombol aksi (align + hapus) — dikelompokkan jadi SATU unit flex:none
+   supaya keduanya selalu tampil bersisian dan tidak pernah terpisah ke baris
+   berbeda oleh flex-wrap, apa pun panjang nama filenya. */
+.frame-actions{ display:flex; align-items:center; gap:2px; flex:none; }
+
 .frame-align-btn{
+  position: relative;
   flex: none; width: 20px; height: 20px; border-radius: 4px; border:none;
   background: transparent; color: var(--text-tertiary); cursor: pointer;
-  display:flex; align-items:center; justify-content:center;
 }
-.frame-align-btn svg{ fill: currentColor; }
+/* Ikon crosshair digambar murni pakai CSS (bukan SVG) — dijamin selalu
+   tampil sama persis di semua browser, tidak bergantung path SVG manual. */
+.frame-align-btn::before{
+  content: '';
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 9px; height: 9px; border: 1.5px solid currentColor; border-radius: 50%;
+  box-sizing: border-box;
+}
+.frame-align-btn::after{
+  content: '';
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 2px; height: 2px; background: currentColor; border-radius: 50%;
+}
 .frame-align-btn:hover{ background: var(--accent-cyan-dim); color: var(--accent-cyan); }
 .frame-item.is-aligning .frame-align-btn{ background: var(--accent-cyan-dim); color: var(--accent-cyan); }
 

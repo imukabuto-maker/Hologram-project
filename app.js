@@ -821,16 +821,21 @@
       alignBtn.className = 'frame-align-btn';
       alignBtn.setAttribute('aria-label', `Sesuaikan posisi ${frame.name}`);
       alignBtn.title = 'Sesuaikan posisi (alignment) — untuk view yang tidak sejajar dengan view lain';
-      alignBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13"><path d="M12 2 9 6h2v4H7V8l-4 4 4 4v-2h4v4H9l3 4 3-4h-2v-4h4v2l4-4-4-4v2h-4V6h2z"/></svg>';
+      // Ikon crosshair digambar via CSS (::before/::after di style.css) —
+      // sengaja tidak pakai SVG manual supaya dijamin selalu tampil benar.
       alignBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         li.classList.toggle('is-aligning');
       });
 
+      const actions = document.createElement('div');
+      actions.className = 'frame-actions';
+      actions.appendChild(alignBtn);
+      actions.appendChild(removeBtn);
+
       li.appendChild(img);
       li.appendChild(meta);
-      li.appendChild(alignBtn);
-      li.appendChild(removeBtn);
+      li.appendChild(actions);
       li.appendChild(buildAlignPanel(frame));
 
       li.addEventListener('click', () => {
