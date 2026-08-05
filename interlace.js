@@ -48,26 +48,47 @@ const Interlace = (() => {
 
   /**
    * Skalakan & crop satu frame agar menutupi penuh ukuran output (mode
-   * "cover", supaya komposisi tiap view konsisten), plus opsi mirror/flip.
+   * "cover", supaya komposisi tiap view konsisten), plus opsi mirror/flip
+   * dan offset alignment (frame.offsetX/offsetY, fraksi -0.25..0.25 dari
+   * lebar/tinggi output — untuk mengoreksi view yang tidak sejajar dengan
+   * view lain, mis. akibat goyangan kamera saat memotret berurutan).
    */
-  function prepareSourceCanvas(frame, outW, outH, mirror, flip) {
+  /**
+   * Skalakan & crop satu frame agar menutupi penuh ukuran output (mode
+   * "cover", supaya komposisi tiap view konsisten), plus opsi mirror/flip,
+   * offset alignment per-frame, dan area crop (cropRect, seragam untuk
+   * semua view — koordinat relatif 0..1 terhadap gambar).
+   */
+  function prepareSourceCanvas(frame, outW, outH, mirror, flip, cropRect) {
     const c = document.createElement('canvas');
     c.width = outW;
     c.height = outH;
     const ctx = c.getContext('2d');
 
-    const srcW = frame.width;
-    const srcH = frame.height;
-    const scale = Math.max(outW / srcW, outH / srcH); // "cover"
-    const drawW = srcW * scale;
-    const drawH = srcH * scale;
-    const dx = (outW - drawW) / 2;
-    const dy = (outH - drawH) / 2;
+    const cr = cropRect || { x: 0, y: 0, width: 1, height: 1 };
+    const sx = cr.x * frame.width;
+    const sy = cr.y * frame.height;
+    const sw = Math.max(1, cr.width * frame.width);
+    const sh = Math.max(1, cr.height * frame.height);
+
+    const scale = Math.max(outW / sw, outH / sh); // "cover" dihitung dari area yang SUDAH di-crop
+    const drawW = sw * scale;
+    const drawH = sh * scale;
+    const offsetX = frame.offsetX || 0;
+    const offsetY = frame.offsetY || 0;
+
+    // Saat mirror/flip aktif, transform translate+scale(-1) di bawah akan
+    // "membalik" arah lokal secara horizontal/vertikal. Supaya nudge kanan
+    // tetap terlihat bergeser ke kanan pada hasil akhir (independen dari
+    // mirror/flip menyala atau tidak), tanda offset dibalik saat mirror/flip
+    // aktif. Sudah diverifikasi numerik sebelum ditulis di sini.
+    const dx = mirror ? (outW - drawW) / 2 - offsetX * outW : (outW - drawW) / 2 + offsetX * outW;
+    const dy = flip ? (outH - drawH) / 2 - offsetY * outH : (outH - drawH) / 2 + offsetY * outH;
 
     ctx.save();
     ctx.translate(mirror ? outW : 0, flip ? outH : 0);
     ctx.scale(mirror ? -1 : 1, flip ? -1 : 1);
-    ctx.drawImage(frame.img, dx, dy, drawW, drawH);
+    ctx.drawImage(frame.img, sx, sy, sw, sh, dx, dy, drawW, drawH);
     ctx.restore();
 
     return c;
@@ -125,10 +146,15 @@ const Interlace = (() => {
     const angleRad = ((params.angleCorrectionDeg || 0) * Math.PI) / 180;
     const vertical = params.lensDirection !== 'horizontal';
 
+    // Area crop (seragam untuk semua view) — default gambar penuh bila crop nonaktif.
+    const cropRect = (params.cropEnabled && params.cropRect)
+      ? params.cropRect
+      : { x: 0, y: 0, width: 1, height: 1 };
+
     // Siapkan kanvas sumber tiap view (di-scale "cover" ke ukuran output +
-    // mirror/flip), lalu ambil data pikselnya sekali di awal.
+    // crop/mirror/flip/offset alignment), lalu ambil data pikselnya sekali di awal.
     const sourceDatas = orderedFrames.map(frame => {
-      const c = prepareSourceCanvas(frame, outW, outH, params.mirror, params.flip);
+      const c = prepareSourceCanvas(frame, outW, outH, params.mirror, params.flip, cropRect);
       return c.getContext('2d').getImageData(0, 0, outW, outH).data;
     });
 

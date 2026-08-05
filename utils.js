@@ -249,6 +249,64 @@ const Utils = (() => {
     return new Blob([...fileParts, ...centralParts, new Uint8Array(end.buffer)], { type: 'application/zip' });
   }
 
+  /* ---------------------------------------------------------------------
+   * Sisipkan metadata DPI fisik (chunk pHYs) ke dalam file PNG.
+   *
+   * MASALAH: HTMLCanvasElement.toBlob('image/png') TIDAK PERNAH menuliskan
+   * informasi DPI ke dalam file PNG-nya — hasilnya cuma piksel mentah tanpa
+   * "ukuran fisik yang dimaksud". Akibatnya, saat file itu dibuka software
+   * cetak, ada dua skenario yang SAMA-SAMA bisa merusak akurasi cetak
+   * lenticular:
+   *   1. Dicetak "Actual Size"/100% tanpa tahu DPI aslinya -> banyak
+   *      software menebak 72 atau 96 DPI, sehingga ukuran fisik hasil cetak
+   *      jauh lebih besar dari yang dimaksud.
+   *   2. Dicetak "Fit to Page" -> gambar di-scale paksa oleh driver cetak,
+   *      merusak presisi jarak antar-pixel yang sudah dihitung pas dengan
+   *      pitch lensa fisik (PixelsPerLens/PixelsPerView).
+   *
+   * FIX: sisipkan chunk pHYs standar PNG (pixels-per-meter) tepat setelah
+   * IHDR. Software yang menghormati metadata ini (Photoshop, banyak print
+   * dialog desktop, dsb) akan otomatis tahu ukuran fisik yang benar saat
+   * mencetak di "Actual Size". ini TIDAK menggantikan kebutuhan mengatur
+   * print dialog ke "Actual Size / No Scaling" — itu tetap wajib dicek
+   * manual, karena mode "Fit to Page" akan mengabaikan metadata ini juga.
+   * ------------------------------------------------------------------- */
+  async function addPngPhysicalDpi(blob, dpi) {
+    const buf = new Uint8Array(await blob.arrayBuffer());
+
+    const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    for (let i = 0; i < 8; i++) {
+      if (buf[i] !== PNG_SIG[i]) return blob; // bukan PNG valid, kembalikan apa adanya (aman, tidak error)
+    }
+
+    // Baca panjang data IHDR langsung dari file (selalu chunk pertama setelah signature).
+    const ihdrLength = new DataView(buf.buffer, buf.byteOffset + 8, 4).getUint32(0, false);
+    const ihdrEnd = 8 + 4 + 4 + ihdrLength + 4; // signature + length + type + data + crc
+
+    const pixelsPerMeter = Math.round(dpi / 0.0254); // 1 inch = 0.0254 meter
+
+    const typeAndData = new Uint8Array(13); // 4 byte type "pHYs" + 9 byte data
+    typeAndData.set([0x70, 0x48, 0x59, 0x73], 0); // "pHYs"
+    const dv = new DataView(typeAndData.buffer);
+    dv.setUint32(4, pixelsPerMeter, false); // pixels per unit, X
+    dv.setUint32(8, pixelsPerMeter, false); // pixels per unit, Y
+    dv.setUint8(12, 1); // unit specifier: 1 = meter
+
+    const crc = crc32(typeAndData);
+
+    const chunk = new Uint8Array(4 + 13 + 4);
+    new DataView(chunk.buffer).setUint32(0, 9, false); // panjang data (9 byte)
+    chunk.set(typeAndData, 4);
+    new DataView(chunk.buffer).setUint32(4 + 13, crc, false);
+
+    const result = new Uint8Array(buf.length + chunk.length);
+    result.set(buf.subarray(0, ihdrEnd), 0);
+    result.set(chunk, ihdrEnd);
+    result.set(buf.subarray(ihdrEnd), ihdrEnd + chunk.length);
+
+    return new Blob([result], { type: 'image/png' });
+  }
+
   return {
     clamp, lerp, roundTo, formatNumber,
     debounce, throttle, uid,
@@ -256,6 +314,6 @@ const Utils = (() => {
     formatFileSize, formatTime,
     computeInterlaceMath, applyPitchCorrection,
     readImageFile, isSupportedImage,
-    downloadBlob, canvasToBlob, createZip,
+    downloadBlob, canvasToBlob, createZip, addPngPhysicalDpi,
   };
 })();

@@ -170,8 +170,18 @@
             <canvas id="mainCanvas" width="800" height="600"></canvas>
             <canvas id="webglCanvas" width="800" height="600" hidden></canvas>
             <div class="lens-grid-overlay" id="lensGridOverlay" hidden></div>
+            <div class="crop-overlay" id="cropOverlay" hidden>
+              <div class="crop-box" id="cropBox">
+                <div class="crop-handle" data-handle="nw"></div>
+                <div class="crop-handle" data-handle="ne"></div>
+                <div class="crop-handle" data-handle="sw"></div>
+                <div class="crop-handle" data-handle="se"></div>
+              </div>
+            </div>
           </div>
         </div>
+
+        <div class="crop-hint" id="cropHint" hidden>Seret kotak untuk memindah &middot; Seret sudut untuk mengubah ukuran area crop</div>
 
         <div class="empty-state" id="emptyState">
           <svg viewBox="0 0 24 24" width="46" height="46"><path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm1 2v10h14V7H5zm2 8l3.2-4 2.4 3 1.8-2.4L18 15H7z"/></svg>
@@ -384,6 +394,7 @@
             <h2>Export</h2>
           </header>
           <div class="panel-section-body">
+            <div class="quality-badge" id="qualityWarning" hidden></div>
             <button class="btn btn-secondary btn-block" id="btnExportOriginal" disabled>Export Original PNG</button>
             <button class="btn btn-secondary btn-block" id="btnExportViewsZip" disabled>Export Semua View (ZIP)</button>
             <button class="btn btn-primary btn-block" id="btnExportPNG" disabled>Export PNG (Interlaced)</button>

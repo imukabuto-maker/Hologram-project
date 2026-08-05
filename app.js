@@ -128,6 +128,7 @@
 
         const isSim = mode === 'simulation';
         simHint.hidden = !isSim;
+        updateCropVisibility(); // pastikan overlay crop tersembunyi kecuali di mode Original
 
         if (isSim) {
           mainCanvas.hidden = true;
@@ -352,6 +353,70 @@
     document.getElementById('paramForm').addEventListener('input', Utils.debounce(refreshInterlacedPreviewIfActive, 250));
   }
 
+  /**
+   * Peringatan kualitas — cek dua hal yang paling sering bikin hasil cetak
+   * lenticular pecah/buram tapi baru ketahuan SETELAH dicetak:
+   *   1. PixelsPerView terlalu kecil (kurang dari beberapa piksel per view
+   *      di dalam satu lensa) -> potensi bergaris/pecah warna.
+   *   2. Resolusi asli gambar lebih kecil dari yang dibutuhkan untuk
+   *      menutupi ukuran output -> gambar terpaksa diperbesar -> buram.
+   * Ini hanya perkiraan/rule of thumb, bukan jaminan mutlak.
+   */
+  function updateQualityWarning() {
+    const badge = document.getElementById('qualityWarning');
+    if (frames.length < 2) { badge.hidden = true; return; }
+
+    const dpi = parseFloat(document.getElementById('paramOutputDPI').value) || 0;
+    const lpi = parseFloat(document.getElementById('paramLPI').value) || 1;
+    const views = parseInt(document.getElementById('paramViews').value, 10) || 1;
+    const pitchCorrection = parseFloat(document.getElementById('paramPitchCorrection').value) || 0;
+    const outputWidthMm = parseFloat(document.getElementById('paramOutputWidth').value) || 100;
+    const outputHeightMm = parseFloat(document.getElementById('paramOutputHeight').value) || 150;
+    const bleedMm = parseFloat(document.getElementById('paramBleed').value) || 0;
+    const cropOn = document.getElementById('paramCropEnabled').checked;
+
+    const base = Utils.computeInterlaceMath({ dpi, lpi, views });
+    const pixelsPerView = base.pixelsPerView * (1 + pitchCorrection / 100);
+
+    const messages = [];
+    let level = null; // null | 'warn' | 'error'
+
+    if (pixelsPerView < 2) {
+      level = 'error';
+      messages.push(`PixelsPerView cuma ${Utils.roundTo(pixelsPerView, 2)}px — sangat rendah, hasil berisiko bergaris/pecah warna. Naikkan Output DPI, atau kurangi Jumlah View/LPI.`);
+    } else if (pixelsPerView < 4) {
+      level = 'warn';
+      messages.push(`PixelsPerView ${Utils.roundTo(pixelsPerView, 2)}px — agak rendah, detail halus mungkin kurang tajam.`);
+    }
+
+    // Perkiraan resolusi sumber vs kebutuhan output (memperhitungkan crop bila aktif)
+    const totalWidthMm = outputWidthMm + bleedMm * 2;
+    const totalHeightMm = outputHeightMm + bleedMm * 2;
+    const outW = Utils.mmToPx(totalWidthMm, dpi);
+    const outH = Utils.mmToPx(totalHeightMm, dpi);
+
+    let lowResCount = 0;
+    frames.forEach(f => {
+      const cw = cropOn ? cropRect.width * f.width : f.width;
+      const ch = cropOn ? cropRect.height * f.height : f.height;
+      const neededScale = Math.max(outW / cw, outH / ch);
+      if (neededScale > 1.15) lowResCount++; // diperbesar >15% dianggap berisiko buram
+    });
+    if (lowResCount > 0) {
+      level = 'error';
+      messages.push(`${lowResCount} dari ${frames.length} gambar beresolusi lebih kecil dari kebutuhan ukuran output ini — akan diperbesar melebihi resolusi asli (berisiko buram).`);
+    }
+
+    if (!level) {
+      badge.hidden = true;
+      return;
+    }
+
+    badge.hidden = false;
+    badge.className = `quality-badge quality-${level}`;
+    badge.textContent = `⚠ ${messages.join(' ')}`;
+  }
+
   /* ============================================================ *
    * Status bar realtime: PixelsPerLens & PixelsPerView
    * (memakai rumus murni dari Utils — belum menyentuh gambar/canvas)
@@ -369,6 +434,7 @@
       Utils.formatNumber(result.pixelsPerView, 4, ' px');
     document.getElementById('statusViewCount').textContent = String(views);
     document.getElementById('mStatusViewCount').textContent = String(views);
+    updateQualityWarning();
   }
 
   /* ============================================================ *
@@ -440,8 +506,13 @@
    * ============================================================ */
   const MAX_PREVIEW_DIM = 4000; // batas aman ukuran render preview (bukan resolusi asli)
 
-  let frames = [];          // { id, file, name, sizeLabel, img, url, width, height }
+  let frames = [];          // { id, file, name, sizeLabel, img, url, width, height, offsetX, offsetY }
   let activeFrameId = null;
+
+  // Area crop tunggal, diterapkan seragam ke semua view (koordinat relatif
+  // 0..1 terhadap gambar, bukan piksel absolut — supaya tidak peduli
+  // resolusi asli tiap gambar). {x,y} = pojok kiri-atas area crop.
+  let cropRect = { x: 0, y: 0, width: 1, height: 1 };
 
   /** Hitung dimensi render preview (mengecilkan gambar sangat besar demi performa kanvas). */
   function computePreviewDims(w, h) {
@@ -471,6 +542,7 @@
       canvas.height = 0;
       document.getElementById('statusImageDims').textContent = '—';
       document.getElementById('mStatusImageDims').textContent = '—';
+      updateCropVisibility();
       return;
     }
 
@@ -479,7 +551,142 @@
     const dimsLabel = `${frame.width} × ${frame.height} px`;
     document.getElementById('statusImageDims').textContent = dimsLabel;
     document.getElementById('mStatusImageDims').textContent = dimsLabel;
+    updateCropVisibility();
+    renderCropOverlay();
     if (fitToScreen) requestAnimationFrame(zoomFitToStage);
+  }
+
+  /* ============================================================ *
+   * CROP TOOL
+   * Satu area crop (cropRect, koordinat relatif 0..1) diterapkan seragam
+   * ke SEMUA view saat interlace. Diedit lewat kotak overlay di kanvas
+   * mode Original (drag badan kotak = pindah, drag sudut = ubah ukuran).
+   * ============================================================ */
+
+  /** Tampilkan/sembunyikan overlay crop sesuai checkbox, mode aktif, dan ada-tidaknya frame. */
+  function updateCropVisibility() {
+    const overlay = document.getElementById('cropOverlay');
+    const hint = document.getElementById('cropHint');
+    const resetBtn = document.getElementById('btnResetCrop');
+    const checkbox = document.getElementById('paramCropEnabled');
+
+    const show = checkbox.checked && appEl.dataset.mode === 'original' && frames.length > 0;
+    overlay.hidden = !show;
+    hint.hidden = !show;
+    resetBtn.disabled = !checkbox.checked;
+  }
+
+  /** Posisikan kotak crop (#cropBox) sesuai cropRect saat ini & ukuran kanvas aktif. */
+  function renderCropOverlay() {
+    const box = document.getElementById('cropBox');
+    const canvas = document.getElementById('mainCanvas');
+    if (!canvas.width || !canvas.height) return;
+    box.style.left = `${cropRect.x * canvas.width}px`;
+    box.style.top = `${cropRect.y * canvas.height}px`;
+    box.style.width = `${cropRect.width * canvas.width}px`;
+    box.style.height = `${cropRect.height * canvas.height}px`;
+  }
+
+  function initCropTool() {
+    const checkbox = document.getElementById('paramCropEnabled');
+    const resetBtn = document.getElementById('btnResetCrop');
+    const box = document.getElementById('cropBox');
+    const CROP_MIN_SIZE = 0.05; // area crop tidak boleh lebih kecil dari 5% gambar
+
+    checkbox.addEventListener('change', () => {
+      updateCropVisibility();
+      refreshInterlacedPreviewIfActive();
+      updateQualityWarning();
+    });
+
+    resetBtn.addEventListener('click', () => {
+      cropRect = { x: 0, y: 0, width: 1, height: 1 };
+      renderCropOverlay();
+      refreshInterlacedPreviewIfActive();
+      updateQualityWarning();
+      logHistory('Area crop direset ke gambar penuh');
+      toast('Area crop direset', 'success');
+    });
+
+    let dragMode = null; // 'move' | 'nw' | 'ne' | 'sw' | 'se'
+    let dragStartClient = null; // {x,y} posisi pointer client saat drag mulai
+    let rectStart = null;       // salinan cropRect saat drag mulai
+
+    function beginDrag(mode, e) {
+      dragMode = mode;
+      dragStartClient = { x: e.clientX, y: e.clientY };
+      rectStart = { ...cropRect };
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    box.addEventListener('pointerdown', (e) => {
+      if (e.target.classList.contains('crop-handle')) return; // biar handle yang menangani sendiri
+      box.setPointerCapture(e.pointerId);
+      beginDrag('move', e);
+    });
+
+    box.querySelectorAll('.crop-handle').forEach(handle => {
+      handle.addEventListener('pointerdown', (e) => {
+        handle.setPointerCapture(e.pointerId);
+        beginDrag(handle.dataset.handle, e);
+      });
+    });
+
+    document.addEventListener('pointermove', (e) => {
+      if (!dragMode) return;
+      const canvas = document.getElementById('mainCanvas');
+      if (!canvas.width || !canvas.height) return;
+
+      // currentZoom = skala CSS transform pada #canvasSurface. Pointer
+      // bergerak di ruang layar (screen px), harus dibagi zoom dulu supaya
+      // dapat delta yang benar di ruang piksel kanvas asli.
+      const dxPx = (e.clientX - dragStartClient.x) / currentZoom;
+      const dyPx = (e.clientY - dragStartClient.y) / currentZoom;
+      const dxNorm = dxPx / canvas.width;
+      const dyNorm = dyPx / canvas.height;
+
+      if (dragMode === 'move') {
+        const x = Utils.clamp(rectStart.x + dxNorm, 0, 1 - rectStart.width);
+        const y = Utils.clamp(rectStart.y + dyNorm, 0, 1 - rectStart.height);
+        cropRect = { ...rectStart, x, y };
+      } else {
+        let { x, y, width, height } = rectStart;
+
+        if (dragMode === 'nw' || dragMode === 'sw') {
+          const newX = Utils.clamp(rectStart.x + dxNorm, 0, rectStart.x + rectStart.width - CROP_MIN_SIZE);
+          width = rectStart.width - (newX - rectStart.x);
+          x = newX;
+        }
+        if (dragMode === 'ne' || dragMode === 'se') {
+          width = Utils.clamp(rectStart.width + dxNorm, CROP_MIN_SIZE, 1 - rectStart.x);
+        }
+        if (dragMode === 'nw' || dragMode === 'ne') {
+          const newY = Utils.clamp(rectStart.y + dyNorm, 0, rectStart.y + rectStart.height - CROP_MIN_SIZE);
+          height = rectStart.height - (newY - rectStart.y);
+          y = newY;
+        }
+        if (dragMode === 'sw' || dragMode === 'se') {
+          height = Utils.clamp(rectStart.height + dyNorm, CROP_MIN_SIZE, 1 - rectStart.y);
+        }
+
+        cropRect = { x, y, width, height };
+      }
+
+      renderCropOverlay();
+    });
+
+    function endDrag() {
+      if (!dragMode) return;
+      dragMode = null;
+      refreshInterlacedPreviewIfActive();
+      refreshSimulationIfActive();
+      updateQualityWarning();
+    }
+    document.addEventListener('pointerup', endDrag);
+    document.addEventListener('pointercancel', endDrag);
+
+    updateCropVisibility();
   }
 
   /**
@@ -500,12 +707,82 @@
     updateStatusMath();
   }
 
+  const ALIGN_STEP = 0.01;   // 1% dari lebar/tinggi per klik
+  const ALIGN_LIMIT = 0.25;  // batas maksimum pergeseran (25%), supaya konten tidak hilang dari kanvas
+
+  /** Bangun panel nudge posisi (alignment) untuk satu frame — dipakai di dalam frame-item. */
+  function buildAlignPanel(frame) {
+    const panel = document.createElement('div');
+    panel.className = 'frame-align-panel';
+
+    const valueEl = document.createElement('span');
+    valueEl.className = 'frame-align-value';
+
+    function updateValueLabel() {
+      const xPct = Math.round(frame.offsetX * 100);
+      const yPct = Math.round(frame.offsetY * 100);
+      valueEl.textContent = `X ${xPct >= 0 ? '+' : ''}${xPct}% · Y ${yPct >= 0 ? '+' : ''}${yPct}%`;
+    }
+    updateValueLabel();
+
+    function nudge(dx, dy) {
+      frame.offsetX = Utils.clamp(Utils.roundTo(frame.offsetX + dx, 3), -ALIGN_LIMIT, ALIGN_LIMIT);
+      frame.offsetY = Utils.clamp(Utils.roundTo(frame.offsetY + dy, 3), -ALIGN_LIMIT, ALIGN_LIMIT);
+      updateValueLabel();
+      logHistory(`Menyesuaikan posisi "${frame.name}"`);
+      refreshInterlacedPreviewIfActive();
+      refreshSimulationIfActive();
+    }
+
+    function makeBtn(label, dx, dy, cls) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `align-btn ${cls}`;
+      b.innerHTML = label;
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        nudge(dx, dy);
+      });
+      return b;
+    }
+
+    const btnUp = makeBtn('&uarr;', 0, -ALIGN_STEP, 'align-up');
+    const btnDown = makeBtn('&darr;', 0, ALIGN_STEP, 'align-down');
+    const btnLeft = makeBtn('&larr;', -ALIGN_STEP, 0, 'align-left');
+    const btnRight = makeBtn('&rarr;', ALIGN_STEP, 0, 'align-right');
+
+    const btnReset = document.createElement('button');
+    btnReset.type = 'button';
+    btnReset.className = 'align-btn align-reset';
+    btnReset.innerHTML = '&#8635;';
+    btnReset.title = 'Reset posisi view ini';
+    btnReset.addEventListener('click', (e) => {
+      e.stopPropagation();
+      frame.offsetX = 0;
+      frame.offsetY = 0;
+      updateValueLabel();
+      logHistory(`Reset posisi "${frame.name}"`);
+      refreshInterlacedPreviewIfActive();
+      refreshSimulationIfActive();
+    });
+
+    panel.appendChild(btnUp);
+    panel.appendChild(btnLeft);
+    panel.appendChild(btnReset);
+    panel.appendChild(btnRight);
+    panel.appendChild(btnDown);
+    panel.appendChild(valueEl);
+
+    return panel;
+  }
+
   function renderFrameList() {
     const list = document.getElementById('frameList');
     const empty = document.getElementById('frameListEmpty');
     list.innerHTML = '';
     empty.hidden = frames.length > 0;
     updateExportButtonsState();
+    updateQualityWarning();
 
     frames.forEach((frame, index) => {
       const li = document.createElement('li');
@@ -539,9 +816,22 @@
         removeFrame(frame.id);
       });
 
+      const alignBtn = document.createElement('button');
+      alignBtn.type = 'button';
+      alignBtn.className = 'frame-align-btn';
+      alignBtn.setAttribute('aria-label', `Sesuaikan posisi ${frame.name}`);
+      alignBtn.title = 'Sesuaikan posisi (alignment) — untuk view yang tidak sejajar dengan view lain';
+      alignBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13"><path d="M12 2 9 6h2v4H7V8l-4 4 4 4v-2h4v4H9l3 4 3-4h-2v-4h4v2l4-4-4-4v2h-4V6h2z"/></svg>';
+      alignBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        li.classList.toggle('is-aligning');
+      });
+
       li.appendChild(img);
       li.appendChild(meta);
+      li.appendChild(alignBtn);
       li.appendChild(removeBtn);
+      li.appendChild(buildAlignPanel(frame));
 
       li.addEventListener('click', () => {
         if (activeFrameId === frame.id) return;
@@ -648,6 +938,8 @@
             img, url,
             width: img.naturalWidth,
             height: img.naturalHeight,
+            offsetX: 0, // pergeseran alignment (fraksi lebar, -0.25..0.25)
+            offsetY: 0, // pergeseran alignment (fraksi tinggi, -0.25..0.25)
           });
           return true;
         })
@@ -821,6 +1113,8 @@
       outputWidthMm: parseFloat(document.getElementById('paramOutputWidth').value) || 100,
       outputHeightMm: parseFloat(document.getElementById('paramOutputHeight').value) || 150,
       bleedMm: parseFloat(document.getElementById('paramBleed').value) || 0,
+      cropEnabled: document.getElementById('paramCropEnabled').checked,
+      cropRect: { ...cropRect },
     };
   }
 
@@ -843,7 +1137,8 @@
       });
 
       btn.textContent = 'Menyiapkan file…';
-      const blob = await Utils.canvasToBlob(resultCanvas, 'image/png');
+      let blob = await Utils.canvasToBlob(resultCanvas, 'image/png');
+      blob = await Utils.addPngPhysicalDpi(blob, params.outputDPI); // sisipkan info DPI fisik ke file PNG
       Utils.downloadBlob(blob, 'lenticular-interlaced.png');
 
       logHistory(`Export Interlaced PNG (${params.numberOfViews} view, ${resultCanvas.width}×${resultCanvas.height}px)`);
@@ -884,6 +1179,7 @@
       }
 
       const values = Settings.toParamsObject();
+      values.cropRect = { ...cropRect };
       Storage.savePreset(name, values);
       refreshPresetDropdown(name);
       logHistory(`Preset "${name}" disimpan`);
@@ -1264,6 +1560,8 @@
     if (!ok) return;
     clearFrames();
     Settings.resetToDefaults();
+    cropRect = { x: 0, y: 0, width: 1, height: 1 };
+    updateCropVisibility();
     applyLensOrientation(Settings.DEFAULTS.lensDirection); // sinkronkan chip & grid overlay juga
     updateStatusMath();
     refreshInterlacedPreviewIfActive();
@@ -1294,6 +1592,11 @@
       }
 
       Settings.fromParamsObject(values);
+      cropRect = values.cropRect
+        ? { ...values.cropRect }
+        : { x: 0, y: 0, width: 1, height: 1 }; // preset lama (sebelum fitur crop ada) -> default penuh
+      updateCropVisibility();
+      renderCropOverlay();
       applyLensOrientation(values.lensDirection || Settings.DEFAULTS.lensDirection); // sinkronkan chip & grid overlay
       updateStatusMath();
       refreshSimulationIfActive();
@@ -1356,6 +1659,7 @@
     initLensOrientation();
     initRangeNumberPairs();
     initZoomControls();
+    initCropTool();
     initModals();
     initDropzones();
     initMiscStubs();
