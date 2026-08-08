@@ -129,6 +129,8 @@
         const isSim = mode === 'simulation';
         simHint.hidden = !isSim;
         updateCropVisibility(); // pastikan overlay crop tersembunyi kecuali di mode Original
+        updateBeforeAfterVisibility();
+        if (mode !== 'interlaced' && beforeAfterActive) showBeforeAfterOriginal(false);
 
         if (isSim) {
           mainCanvas.hidden = true;
@@ -783,6 +785,7 @@
     empty.hidden = frames.length > 0;
     updateExportButtonsState();
     updateQualityWarning();
+    updateBeforeAfterVisibility();
 
     frames.forEach((frame, index) => {
       const li = document.createElement('li');
@@ -1486,23 +1489,234 @@
   /* ============================================================ *
    * Tab bar bawah khusus mobile: berpindah antara Sumber / Kanvas / Parameter
    * ============================================================ */
-  function initMobileTabbar() {
-    const tabbar = document.getElementById('mobileTabbar');
-    if (!tabbar) return;
-    const buttons = Array.from(tabbar.querySelectorAll('.mobile-tab'));
+  /* ============================================================ *
+   * MOBILE: Drawer mengambang (Sumber/Parameter), Bottom Sheet (Export),
+   * FAB, dan gesture (swipe buka/tutup, pinch-zoom, double-tap fit,
+   * long-press before/after).
+   * ============================================================ */
+  const MOBILE_BREAKPOINT = 860;
+  function isMobileLayout() { return window.innerWidth <= MOBILE_BREAKPOINT; }
 
-    buttons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const view = btn.dataset.view;
-        appEl.dataset.mobileView = view;
-        buttons.forEach(b => b.classList.toggle('is-active', b === btn));
-        // Kanvas/simulasi perlu tahu ukurannya berubah begitu drawer disembunyikan/ditampilkan.
-        requestAnimationFrame(() => {
-          Preview.resize();
-          if (appEl.dataset.mode !== 'simulation' && frames.length) zoomFitToStage(appEl.dataset.mode === 'interlaced');
-        });
-      });
+  function openDrawer(which) {
+    appEl.dataset.drawer = which;
+    document.getElementById('fabWrap').classList.remove('is-open');
+    requestAnimationFrame(() => {
+      Preview.resize();
+      if (appEl.dataset.mode !== 'simulation' && frames.length) {
+        zoomFitToStage(appEl.dataset.mode === 'interlaced');
+      }
     });
+  }
+
+  function closeDrawer() {
+    if (appEl.dataset.drawer === 'none') return;
+    appEl.dataset.drawer = 'none';
+    requestAnimationFrame(() => {
+      Preview.resize();
+      if (appEl.dataset.mode !== 'simulation' && frames.length) {
+        zoomFitToStage(appEl.dataset.mode === 'interlaced');
+      }
+    });
+  }
+
+  /** Pindahkan #exportSection antara slot desktop (di dalam drawer Parameter)
+   *  dan bottom sheet mobile — satu node DOM yang sama dipindah-tempat
+   *  (bukan diduplikasi), supaya semua id/listener export tetap utuh. */
+  function relocateExportSection() {
+    const section = document.getElementById('exportSection');
+    const desktopSlot = document.getElementById('exportDesktopSlot');
+    const mobileSlot = document.getElementById('bottomSheetExportContent');
+    const target = isMobileLayout() ? mobileSlot : desktopSlot;
+    if (section.parentElement !== target) {
+      target.appendChild(section);
+    }
+  }
+
+  function initMobileDrawers() {
+    const backdrop = document.getElementById('drawerBackdrop');
+    const fabWrap = document.getElementById('fabWrap');
+    const fabMain = document.getElementById('fabMain');
+
+    fabMain.addEventListener('click', () => fabWrap.classList.toggle('is-open'));
+
+    document.querySelectorAll('.fab-item[data-drawer-target]').forEach(btn => {
+      btn.addEventListener('click', () => openDrawer(btn.dataset.drawerTarget));
+    });
+
+    document.getElementById('fabThemeToggle').addEventListener('click', () => {
+      const next = appEl.classList.contains('theme-light') ? 'dark' : 'light';
+      setTheme(next, true);
+      fabWrap.classList.remove('is-open');
+    });
+
+    backdrop.addEventListener('click', closeDrawer);
+
+    relocateExportSection();
+    window.addEventListener('resize', Utils.debounce(relocateExportSection, 150));
+  }
+
+  /** Tampilkan/sembunyikan tombol Before/After — hanya relevan di tab
+   *  Interlaced (membandingkan hasil interlace vs gambar asli). */
+  function updateBeforeAfterVisibility() {
+    const btn = document.getElementById('btnBeforeAfter');
+    if (!btn) return;
+    btn.hidden = !(appEl.dataset.mode === 'interlaced' && frames.length >= 2);
+  }
+
+  let beforeAfterActive = false;
+  function showBeforeAfterOriginal(show) {
+    const badge = document.getElementById('beforeAfterBadge');
+    const btn = document.getElementById('btnBeforeAfter');
+    if (show === beforeAfterActive) return;
+    beforeAfterActive = show;
+    badge.hidden = !show;
+    btn.classList.toggle('is-active', show);
+
+    if (show) {
+      const frame = frames.find(f => f.id === activeFrameId) || frames[0];
+      if (frame) drawFrameToMainCanvas(frame);
+    } else if (appEl.dataset.mode === 'interlaced') {
+      renderInterlacedOrMessage();
+    }
+  }
+
+  function initBeforeAfterButton() {
+    document.getElementById('btnBeforeAfter').addEventListener('click', () => {
+      showBeforeAfterOriginal(!beforeAfterActive);
+    });
+  }
+
+  /** Gesture di area kanvas: pinch-zoom (mode 2D), double-tap = fit, long-press = before/after. */
+  function initCanvasGestures() {
+    const stage = document.getElementById('canvasStage');
+    const activePointers = new Map();
+    let longPressTimer = null;
+    let longPressTriggered = false;
+    let singleStart = null;
+    let pinchStartDist = null;
+    let pinchStartZoom = null;
+    let lastTapTime = 0;
+    let lastTapPos = null;
+
+    function clearLongPress() {
+      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    }
+
+    stage.addEventListener('pointerdown', (e) => {
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (activePointers.size === 1) {
+        singleStart = { x: e.clientX, y: e.clientY };
+        if (appEl.dataset.mode === 'interlaced') {
+          clearLongPress();
+          longPressTriggered = false;
+          longPressTimer = setTimeout(() => {
+            longPressTriggered = true;
+            showBeforeAfterOriginal(true);
+          }, 450);
+        }
+      } else if (activePointers.size === 2) {
+        clearLongPress(); // 2 jari = niat pinch, bukan long-press
+        if (longPressTriggered) { showBeforeAfterOriginal(false); longPressTriggered = false; }
+        if (appEl.dataset.mode !== 'simulation') {
+          const pts = Array.from(activePointers.values());
+          pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          pinchStartZoom = currentZoom;
+        }
+      }
+    });
+
+    stage.addEventListener('pointermove', (e) => {
+      if (!activePointers.has(e.pointerId)) return;
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (activePointers.size === 1 && singleStart && !longPressTriggered) {
+        const dist = Math.hypot(e.clientX - singleStart.x, e.clientY - singleStart.y);
+        if (dist > 12) clearLongPress(); // gerak terlalu jauh, batalkan niat long-press (mungkin scroll/pan)
+      } else if (activePointers.size === 2 && pinchStartDist && appEl.dataset.mode !== 'simulation') {
+        const pts = Array.from(activePointers.values());
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        currentZoom = Utils.clamp(Utils.roundTo(pinchStartZoom * (dist / pinchStartDist), 2), 0.05, 8);
+        applyZoom();
+      }
+    });
+
+    function endPointer(e) {
+      activePointers.delete(e.pointerId);
+      clearLongPress();
+
+      if (longPressTriggered) {
+        showBeforeAfterOriginal(false);
+        longPressTriggered = false;
+        singleStart = null;
+        return; // jangan dihitung sebagai tap setelah long-press
+      }
+      if (activePointers.size < 2) { pinchStartDist = null; pinchStartZoom = null; }
+
+      if (activePointers.size === 0 && singleStart) {
+        const now = Date.now();
+        if (lastTapPos && now - lastTapTime < 300 && Math.hypot(e.clientX - lastTapPos.x, e.clientY - lastTapPos.y) < 30) {
+          if (appEl.dataset.mode !== 'simulation' && frames.length) {
+            zoomFitToStage(appEl.dataset.mode === 'interlaced');
+          }
+          lastTapTime = 0; lastTapPos = null;
+        } else {
+          lastTapTime = now;
+          lastTapPos = { x: e.clientX, y: e.clientY };
+        }
+        singleStart = null;
+      }
+    }
+    stage.addEventListener('pointerup', endPointer);
+    stage.addEventListener('pointercancel', endPointer);
+  }
+
+  /**
+   * Swipe gesture untuk buka/tutup drawer & bottom sheet. Dibuka lewat
+   * SWIPE DARI TEPI LAYAR (bukan swipe di mana saja) — supaya tidak
+   * bentrok dengan gesture lain di kanvas (pinch-zoom, pan, drag crop/
+   * alignment). Menutup drawer yang sedang terbuka bisa dari mana saja
+   * di dalam drawer itu sendiri (swipe ke arah "keluar" atau swipe turun).
+   */
+  function initSwipeGestures() {
+    const EDGE = 24;
+    const THRESHOLD = 60;
+    let startX = null, startY = null, startEdge = null;
+
+    document.addEventListener('touchstart', (e) => {
+      if (!isMobileLayout() || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      startX = t.clientX; startY = t.clientY;
+      startEdge = appEl.dataset.drawer !== 'none'
+        ? 'inside'
+        : (startX <= EDGE ? 'left' : (startX >= window.innerWidth - EDGE ? 'right' : null));
+    }, { passive: true });
+
+    document.addEventListener('touchend', (e) => {
+      if (startX === null) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      const currentDrawer = appEl.dataset.drawer;
+
+      if (currentDrawer !== 'none') {
+        const closingSwipe =
+          (Math.abs(dy) > Math.abs(dx) && dy > THRESHOLD) ||
+          (currentDrawer === 'left' && dx < -THRESHOLD) ||
+          (currentDrawer === 'right' && dx > THRESHOLD) ||
+          (currentDrawer === 'bottom' && dy > THRESHOLD);
+        if (closingSwipe) closeDrawer();
+      } else if (startEdge === 'left' && dx > THRESHOLD && Math.abs(dx) > Math.abs(dy)) {
+        openDrawer('left');
+      } else if (startEdge === 'right' && dx < -THRESHOLD && Math.abs(dx) > Math.abs(dy)) {
+        openDrawer('right');
+      } else if (startEdge === null && startY > window.innerHeight - 120 &&
+                 dy < -THRESHOLD && Math.abs(dy) > Math.abs(dx)) {
+        openDrawer('bottom');
+      }
+
+      startX = null; startY = null; startEdge = null;
+    }, { passive: true });
   }
 
   /* ============================================================ *
@@ -1671,7 +1885,10 @@
     initSimulationControls();
     initExportControls();
     initResizeHandling();
-    initMobileTabbar();
+    initMobileDrawers();
+    initCanvasGestures();
+    initSwipeGestures();
+    initBeforeAfterButton();
     refreshPresetDropdown();
     renderFrameList();
     renderHistory();
