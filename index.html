@@ -14,7 +14,7 @@
 </head>
 <body>
 
-<div id="app" data-mode="original" data-drawer="none">
+<div id="app" data-mode="original">
 
   <!-- ============================================================ -->
   <!-- TITLE BAR                                                     -->
@@ -88,6 +88,36 @@
               <!-- diisi oleh app.js pada Tahap 2 -->
             </ul>
             <p class="empty-hint" id="frameListEmpty">Belum ada frame. Upload gambar untuk mengisi daftar view.</p>
+
+            <!-- Frame browser: navigasi kiri/kanan pengganti daftar thumbnail
+                 (khusus tampilan mobile — lihat @media di style.css).
+                 Menampilkan satu view pada satu waktu + kontrol alignment
+                 langsung di bawahnya. -->
+            <div class="frame-browser" id="frameBrowser" hidden>
+              <div class="frame-browser-nav">
+                <button type="button" class="frame-browser-arrow" id="frameBrowserPrev" aria-label="View sebelumnya">
+                  <svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 5l-7 7 7 7"/></svg>
+                </button>
+                <div class="frame-browser-info">
+                  <span class="frame-browser-label" id="frameBrowserLabel">View 1 / 1</span>
+                  <span class="frame-browser-sub" id="frameBrowserSub">&mdash;</span>
+                </div>
+                <button type="button" class="frame-browser-arrow" id="frameBrowserNext" aria-label="View berikutnya">
+                  <svg viewBox="0 0 24 24" width="18" height="18"><path d="M9 5l7 7-7 7"/></svg>
+                </button>
+                <button type="button" class="frame-browser-remove" id="frameBrowserRemove" aria-label="Hapus view ini">
+                  <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 7h12l-1 13H7L6 7zm3-4h6l1 2h4v2H4V5h4l1-2z"/></svg>
+                </button>
+              </div>
+              <div class="frame-browser-align">
+                <button type="button" class="align-btn" data-fb-dir="up" aria-label="Geser atas">&uarr;</button>
+                <button type="button" class="align-btn" data-fb-dir="left" aria-label="Geser kiri">&larr;</button>
+                <button type="button" class="align-btn align-reset" data-fb-dir="reset" aria-label="Reset posisi">&#8635;</button>
+                <button type="button" class="align-btn" data-fb-dir="right" aria-label="Geser kanan">&rarr;</button>
+                <button type="button" class="align-btn" data-fb-dir="down" aria-label="Geser bawah">&darr;</button>
+                <span class="frame-align-value" id="frameBrowserAlignValue">X +0% &middot; Y +0%</span>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -401,9 +431,6 @@
             <p class="empty-hint" id="exportInterlacedHint">Upload minimal 2 gambar/view untuk mengaktifkan export interlaced.</p>
           </div>
         </section>
-        <!-- Penanda posisi asli Export untuk tampilan desktop (JS mengembalikan
-             #exportSection ke sini bila layar melebar dari mobile ke desktop) -->
-        <div id="exportDesktopSlot"></div>
 
       </div>
     </aside>
@@ -442,44 +469,12 @@
   </footer>
 
   <!-- ============================================================ -->
-  <!-- MOBILE: backdrop drawer, FAB menu, bottom sheet Export         -->
-  <!-- Hanya aktif/terlihat di layar sempit (lihat @media di style.css) -->
+  <!-- MOBILE: Before/After (fitur dipertahankan, posisi ikut kanvas) -->
   <!-- ============================================================ -->
-  <div class="drawer-backdrop" id="drawerBackdrop"></div>
-
-  <div class="fab-wrap" id="fabWrap">
-    <div class="fab-menu" id="fabMenu">
-      <button class="fab-item" data-drawer-target="left" aria-label="Sumber Gambar">
-        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 4h10v2H6v10H4V4zm4 4h12v14H8V8zm2 2v10h8V10h-8z"/></svg>
-        <span>Sumber</span>
-      </button>
-      <button class="fab-item" data-drawer-target="right" aria-label="Parameter">
-        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 4h18v2H3zM9 11h12v2H9zM3 18h18v2H3z"/></svg>
-        <span>Parameter</span>
-      </button>
-      <button class="fab-item" data-drawer-target="bottom" aria-label="Export">
-        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 3l5 5h-3v6h-4V8H7l5-5zM5 19h14v2H5z"/></svg>
-        <span>Export</span>
-      </button>
-      <button class="fab-item" id="fabThemeToggle" aria-label="Ganti tema">
-        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1Z"/></svg>
-        <span>Tema</span>
-      </button>
-    </div>
-    <button class="fab-main" id="fabMain" aria-label="Buka menu">
-      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 4v16M4 12h16"/></svg>
-    </button>
-  </div>
-
   <button class="floating-before-after" id="btnBeforeAfter" hidden aria-label="Bandingkan Sebelum/Sesudah">
     <svg viewBox="0 0 24 24" width="16" height="16"><path d="M10 3v18H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h6zm4 0h6a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-6V3z"/></svg>
   </button>
   <div class="before-after-badge" id="beforeAfterBadge" hidden>SEBELUM (ORIGINAL)</div>
-
-  <div class="bottom-sheet" id="bottomSheetExport">
-    <div class="bottom-sheet-handle"></div>
-    <div class="bottom-sheet-scroll" id="bottomSheetExportContent"></div>
-  </div>
 
   <!-- ============================================================ -->
   <!-- MODAL: Calibration Wizard (kerangka, logika Tahap 6)          -->

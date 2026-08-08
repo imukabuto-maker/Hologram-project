@@ -232,7 +232,6 @@ ul{ list-style:none; margin:0; padding:0; }
 }
 .panel-section-header h2{ font-size: 12px; letter-spacing:.03em; text-transform: uppercase; color: var(--text-secondary); flex: 1 1 auto; }
 .header-action{ margin-left: auto; flex: none; }
-#exportDesktopSlot{ display: contents; }
 .section-icon{ font-size: 13px; color: var(--accent-cyan); width:14px; text-align:center; }
 .panel-section-body{ padding: 12px; display:flex; flex-direction:column; gap:10px; }
 
@@ -616,6 +615,45 @@ input[type="range"]::-moz-range-thumb{
   white-space: nowrap;
 }
 
+/* Frame browser — navigasi kiri/kanan pengganti daftar thumbnail (mobile).
+   Disembunyikan di desktop secara default lewat atribut [hidden] di HTML;
+   dimunculkan lewat CSS di dalam @media mobile. */
+.frame-browser{
+  display: none; /* basis: desktop tetap pakai daftar thumbnail — dimunculkan lewat @media mobile */
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  flex-direction: column; gap: 10px;
+}
+.frame-browser-nav{ display: flex; align-items: center; gap: 8px; }
+.frame-browser-arrow{
+  flex: none; width: 38px; height: 38px; border-radius: 50%;
+  border: 1px solid var(--border-subtle); background: var(--bg-input);
+  color: var(--text-primary); display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.frame-browser-arrow svg{ fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.frame-browser-arrow:disabled{ opacity: .35; cursor: not-allowed; }
+.frame-browser-arrow:not(:disabled):hover{ border-color: var(--accent-cyan); color: var(--accent-cyan); }
+.frame-browser-info{ flex: 1 1 auto; min-width: 0; text-align: center; }
+.frame-browser-label{ display: block; font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.frame-browser-sub{ display: block; font-size: 10.5px; color: var(--text-tertiary); font-family: var(--font-mono); margin-top: 2px; }
+.frame-browser-remove{
+  flex: none; width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--border-subtle);
+  background: transparent; color: var(--text-tertiary); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.frame-browser-remove svg{ fill: currentColor; }
+.frame-browser-remove:hover{ background: var(--danger-dim); border-color: rgba(239,91,83,.35); color: var(--danger); }
+
+.frame-browser-align{
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding-top: 8px; border-top: 1px dashed var(--border-subtle);
+}
+.frame-browser-align .align-btn{ width: 30px; height: 30px; font-size: 13px; }
+.frame-browser-align .frame-align-value{ margin-left: 6px; font-size: 10.5px; }
+
 /* State interaksi frame-item (Tahap 2: upload & reorder) */
 .frame-item.is-active{
   border-color: var(--accent-cyan);
@@ -713,13 +751,9 @@ input[type="range"]::-moz-range-thumb{
 @keyframes toastIn{ from{ opacity:0; transform: translateY(8px); } to{ opacity:1; transform:none; } }
 
 /* ==========================================================================
-   MOBILE — Canvas-First: drawer mengambang, FAB, bottom sheet
+   MOBILE — kanvas sticky + Before/After (posisi mengikuti area kanvas)
    ========================================================================== */
-.drawer-backdrop{
-  display: none;
-}
-
-.fab-wrap, .floating-before-after, .before-after-badge, .bottom-sheet{
+.floating-before-after, .before-after-badge{
   display: none; /* hanya aktif lewat media query di bawah */
 }
 
@@ -731,218 +765,100 @@ input[type="range"]::-moz-range-thumb{
 }
 
 /* --- iPhone / layar sempit (<=860px) --------------------------------------
-   Filosofi "Canvas First": tidak ada header/judul aplikasi, kanvas preview
-   selalu terlihat penuh sebagai lapisan dasar. Panel Sumber & Parameter
-   jadi DRAWER mengambang (glassmorphism) yang menutupi kanvas dari samping,
-   Export jadi bottom sheet dari bawah — bukan lagi tiga "halaman" terpisah
-   yang saling menggantikan kanvas. Dibuka lewat FAB atau gesture swipe dari
-   tepi layar, ditutup lewat backdrop/swipe turun.
+   Pendekatan (revisi ke-2, berdasar masukan langsung): BUKAN drawer
+   mengambang yang menutupi preview — melainkan halaman yang di-scroll
+   biasa, dengan kanvas preview STICKY (menempel) di bagian atas. Saat
+   pengguna scroll ke bawah untuk mengatur Sumber/Parameter/Export, kanvas
+   tetap "melayang" terlihat di atas, tidak pernah tertutup. Urutan visual
+   diatur lewat flex `order` (bukan pindah DOM): Kanvas -> Sumber -> Parameter.
    ============================================================================ */
 @media (max-width: 860px){
-  /* BUG FIX: #app pakai grid-template-rows: var(--titlebar-h) 1fr var(--statusbar-h).
-     Menyembunyikan #titlebar via display:none TIDAK menghapus jatah baris
-     grid-nya (grid-template-rows tetap mereservasi ruang itu). Tanpa baris
-     ini, kanvas cuma dapat sisa beberapa puluh piksel, bukan hampir layar
-     penuh seperti yang dimaksud desain Canvas-First. */
   :root{ --titlebar-h: 0px; --statusbar-h: 0px; }
 
-  /* BUG FIX: #titlebar di-display:none membuatnya lepas total dari grid,
-     sehingga #workspace otomatis "naik" mengisi baris grid PERTAMA (yang
-     seharusnya jatah titlebar, 0px) alih-alih baris tengah (1fr). Definisikan
-     ulang jadi satu baris saja, karena titlebar & statusbar toh sama-sama
-     tidak dipakai di mobile. */
-  #app{ grid-template-rows: 1fr; }
-
-  body{ overflow: hidden; }
-
-  /* Tidak ada header/judul di mobile — kanvas jadi fokus utama sepenuhnya */
+  /* Tidak ada header/judul di mobile */
   #titlebar{ display: none; }
 
+  /* Halaman di-scroll biasa (bukan dikunci overflow:hidden seperti versi drawer) */
+  /* BUG FIX: overflow-y:auto pada html DAN body sekaligus menciptakan dua
+     scroll container yang tumpang tindih, membuat position:sticky pada
+     kanvas tidak berfungsi (browser tidak konsisten menempelkannya relatif
+     ke yang mana). Cukup body saja sebagai satu-satunya scroll container;
+     html dibiarkan default. */
+  body{ overflow-x: hidden; overflow-y: auto; height: auto; }
+  html{ height: auto; }
+  #app{ display: block; height: auto; min-height: 100vh; }
+
   #workspace{
-    grid-template-columns: 1fr !important;
-    grid-template-rows: 1fr;
-    position: relative;
+    display: flex; flex-direction: column;
+    height: auto; min-height: 0;
   }
-  #center-panel{ position: absolute; inset: 0; }
+  /* Urutan visual: Kanvas dulu, baru Sumber, baru Parameter — TANPA pindah DOM */
+  #center-panel{ order: 1; }
+  #left-panel{ order: 2; }
+  #right-panel{ order: 3; }
 
-  /* --- Drawer kiri/kanan (Sumber & Parameter) --- */
+  /* --- Kanvas STICKY: tetap "mengambang" terlihat saat halaman discroll --- */
+  #center-panel{
+    position: sticky; top: 0; z-index: 20;
+    height: 46vh; min-height: 300px; max-height: 480px;
+    background: var(--bg-app);
+    box-shadow: 0 10px 26px rgba(0,0,0,.4);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .canvas-toolbar{
+    flex-wrap: wrap; padding: 8px 10px; gap: 8px;
+  }
+  .mode-tabs{ max-width: 100%; overflow-x: auto; }
+  .canvas-toolbar-right{ flex-wrap: wrap; justify-content: flex-end; }
+
+  /* Sembunyikan info sekunder yang memakan tempat — cukup toolbar + badge before/after */
+  .sim-hint{ display: none; }
+  .mobile-status-card{ display: none; }
+  #statusbar{ display: none; }
+
+  /* --- Sumber & Parameter: bagian normal yang mengalir di BAWAH kanvas sticky --- */
   .side-panel{
-    position: fixed; top: 0; bottom: 0; z-index: 70;
-    width: 87%; max-width: 340px;
-    background: rgba(20,22,29,.86);
-    backdrop-filter: blur(22px) saturate(170%);
-    -webkit-backdrop-filter: blur(22px) saturate(170%);
-    box-shadow: 0 0 46px rgba(0,0,0,.5);
-    transition: transform 300ms cubic-bezier(.32,.72,0,1);
-    border: none;
+    position: static; width: 100%; height: auto;
+    background: transparent; box-shadow: none;
+    transform: none !important; transition: none;
+    border: none !important;
   }
-  #left-panel{ left: 0; transform: translateX(-105%); border-right: 1px solid rgba(255,255,255,.07); }
-  #right-panel{ right: 0; transform: translateX(105%); border-left: 1px solid rgba(255,255,255,.07); }
-  #app[data-drawer="left"] #left-panel{ transform: translateX(0); }
-  #app[data-drawer="right"] #right-panel{ transform: translateX(0); }
-
   .panel-scroll{
-    padding: 16px;
-    padding-top: calc(16px + env(safe-area-inset-top, 0px));
-    padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+    height: auto; overflow-y: visible;
+    padding: 14px; padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
     gap: 12px;
   }
 
-  /* --- Backdrop di belakang drawer/bottom sheet --- */
-  .drawer-backdrop{
-    display: block;
-    position: fixed; inset: 0; z-index: 65;
-    background: rgba(4,5,8,.5);
-    backdrop-filter: blur(3px);
-    opacity: 0; pointer-events: none;
-    transition: opacity 280ms ease;
-  }
-  #app[data-drawer]:not([data-drawer="none"]) .drawer-backdrop{ opacity: 1; pointer-events: auto; }
+  /* --- Frame browser (navigasi kiri/kanan) menggantikan daftar thumbnail --- */
+  .frame-list, #frameListEmpty{ display: none; }
+  .frame-browser:not([hidden]){ display: flex; }
 
-  /* --- Toolbar kanvas jadi "pass-through": anak-anaknya melayang independen --- */
-  .canvas-toolbar{ display: contents; }
-
-  /* Mode-tabs di kiri-atas (BUKAN center) — dengan label "Lenticular
-     Simulation" yang panjang, versi center dulu bentrok dengan toolbar
-     kanan-atas di layar sempit. Kiri-atas aman karena toolbar lain semua
-     dipindah ke kanan-BAWAH (lihat di bawah). */
-  .mode-tabs{
-    position: fixed; z-index: 50;
-    top: calc(env(safe-area-inset-top, 0px) + 12px); left: 12px;
-    background: rgba(20,22,29,.8);
-    backdrop-filter: blur(18px) saturate(170%);
-    -webkit-backdrop-filter: blur(18px) saturate(170%);
-    border: 1px solid rgba(255,255,255,.08);
-    box-shadow: 0 8px 24px rgba(0,0,0,.35);
-    max-width: calc(100vw - 24px);
-    overflow-x: auto;
-  }
-
-  /* Toolbar kanan (orientasi lensa, zoom, grid, gyro) dipindah ke
-     KANAN-BAWAH, ditumpuk PERSIS DI ATAS tombol Before/After — supaya
-     tidak pernah bertabrakan dengan mode-tabs di kiri-atas. */
-  .canvas-toolbar-right{
-    position: fixed; z-index: 50;
-    bottom: calc(74px + env(safe-area-inset-bottom, 0px)); right: 12px;
-    flex-direction: column; align-items: stretch; gap: 8px;
-    background: rgba(20,22,29,.8);
-    backdrop-filter: blur(18px) saturate(170%);
-    -webkit-backdrop-filter: blur(18px) saturate(170%);
-    border: 1px solid rgba(255,255,255,.08);
-    border-radius: 16px;
-    padding: 7px; box-shadow: 0 8px 24px rgba(0,0,0,.35);
-  }
-  .canvas-toolbar-right .view-toggle-group,
-  .canvas-toolbar-right .control-group-2d,
-  .canvas-toolbar-right .zoom-controls{
-    background: transparent; border: none; box-shadow: none; padding: 0;
-  }
-
-  /* sim-hint di kiri-bawah (di atas FAB), lebar dibatasi supaya tidak
-     menjangkau ke area toolbar kanan-bawah. */
-  .sim-hint{
-    position: fixed; left: 16px; bottom: calc(78px + env(safe-area-inset-bottom, 0px));
-    z-index: 50;
-    border-radius: 999px; border: 1px solid rgba(255,255,255,.08);
-    background: rgba(20,22,29,.8);
-    backdrop-filter: blur(18px) saturate(170%);
-    -webkit-backdrop-filter: blur(18px) saturate(170%);
-    max-width: calc(100vw - 190px);
-  }
-
-  /* Kartu status ringkas disembunyikan di mobile — mengurangi kepadatan
-     layar sesuai prinsip minimalis (info intinya sudah ada di floating
-     toolbar & badge before/after). */
-  .mobile-status-card{ display: none; }
-
-  #statusbar{ display: none; }
-
-  /* --- FAB (Floating Action Button) --- */
-  .fab-wrap{
-    display: flex; flex-direction: column-reverse; align-items: flex-start; gap: 10px;
-    position: fixed; z-index: 80;
-    left: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-  }
-  .fab-main{
-    width: 52px; height: 52px; border-radius: 50%; border: none;
-    background: var(--accent-gradient); color: #0d0f13;
-    display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 8px 22px rgba(0,0,0,.45);
-    transition: transform 240ms cubic-bezier(.32,.72,0,1);
-  }
-  .fab-main svg{ fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; transition: transform 240ms ease; }
-  #fabWrap.is-open .fab-main svg{ transform: rotate(45deg); }
-
-  /* Sembunyikan FAB saat drawer/bottom sheet manapun sedang terbuka, supaya
-     tidak menimpa konten drawer (mis. judul "Export" di bottom sheet). */
-  #app[data-drawer]:not([data-drawer="none"]) .fab-wrap{
-    opacity: 0; pointer-events: none; transform: scale(.85);
-  }
-  .fab-wrap{ transition: opacity 220ms ease, transform 220ms ease; }
-  .fab-menu{
-    display: flex; flex-direction: column; gap: 8px;
-    opacity: 0; pointer-events: none; transform: translateY(10px) scale(.92);
-    transition: opacity 220ms ease, transform 220ms cubic-bezier(.32,.72,0,1);
-  }
-  #fabWrap.is-open .fab-menu{ opacity: 1; pointer-events: auto; transform: none; }
-  .fab-item{
-    display: flex; align-items: center; gap: 9px;
-    background: rgba(24,26,34,.88);
-    backdrop-filter: blur(16px) saturate(170%);
-    -webkit-backdrop-filter: blur(16px) saturate(170%);
-    border: 1px solid rgba(255,255,255,.08);
-    color: var(--text-primary);
-    padding: 10px 16px 10px 12px; border-radius: 999px;
-    font-size: 12.5px; white-space: nowrap;
-    box-shadow: 0 6px 16px rgba(0,0,0,.4);
-  }
-  .fab-item svg{ fill: currentColor; flex: none; }
-
-  /* --- Tombol & badge Before/After --- */
+  /* --- Tombol & badge Before/After — posisinya mengikuti area kanvas sticky
+     (fixed relatif viewport, tapi Y dihitung dari tinggi kanvas 46vh supaya
+     selalu pas di pojok kanvas, baik sebelum maupun sesudah discroll). --- */
   .floating-before-after{
     display: flex; align-items: center; justify-content: center;
-    position: fixed; z-index: 55;
-    right: 12px; bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-    width: 46px; height: 46px; border-radius: 50%;
+    position: fixed; z-index: 25;
+    right: 10px; top: calc(46vh - 54px);
+    width: 42px; height: 42px; border-radius: 50%;
     background: rgba(24,26,34,.85);
-    backdrop-filter: blur(16px) saturate(170%);
-    -webkit-backdrop-filter: blur(16px) saturate(170%);
+    backdrop-filter: blur(14px) saturate(170%);
+    -webkit-backdrop-filter: blur(14px) saturate(170%);
     border: 1px solid rgba(255,255,255,.08); color: var(--text-primary);
-    box-shadow: 0 8px 20px rgba(0,0,0,.4);
+    box-shadow: 0 6px 16px rgba(0,0,0,.4);
   }
   .floating-before-after svg{ fill: currentColor; }
   .floating-before-after.is-active{ background: var(--accent-gradient); color: #0d0f13; }
 
   .before-after-badge{
     display: block;
-    position: fixed; z-index: 56;
-    top: calc(env(safe-area-inset-top, 0px) + 14px); left: 50%;
-    transform: translateX(-50%);
+    position: fixed; z-index: 26;
+    top: 10px; left: 50%; transform: translateX(-50%);
     background: rgba(232,179,57,.95); color: #1a1400;
-    font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
-    padding: 6px 14px; border-radius: 999px;
+    font-size: 10px; font-weight: 700; letter-spacing: .04em;
+    padding: 5px 12px; border-radius: 999px;
     box-shadow: 0 6px 16px rgba(0,0,0,.35);
   }
-
-  /* --- Bottom sheet Export --- */
-  .bottom-sheet{
-    display: block;
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 75;
-    max-height: 74vh;
-    background: rgba(18,20,26,.9);
-    backdrop-filter: blur(24px) saturate(170%);
-    -webkit-backdrop-filter: blur(24px) saturate(170%);
-    border: 1px solid rgba(255,255,255,.08); border-bottom: none;
-    border-radius: 20px 20px 0 0;
-    box-shadow: 0 -10px 34px rgba(0,0,0,.45);
-    transform: translateY(105%);
-    transition: transform 300ms cubic-bezier(.32,.72,0,1);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
-  #app[data-drawer="bottom"] .bottom-sheet{ transform: translateY(0); }
-  .bottom-sheet-handle{ width: 40px; height: 4px; border-radius: 4px; background: var(--border-strong); margin: 10px auto 2px; }
-  .bottom-sheet-scroll{ padding: 10px 18px 22px; max-height: calc(74vh - 30px); overflow-y: auto; }
-  #exportDesktopSlot{ display: none; }
 
   /* Target sentuh lebih besar */
   .icon-btn{ width: 36px; height: 36px; }

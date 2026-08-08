@@ -712,29 +712,40 @@
   const ALIGN_STEP = 0.01;   // 1% dari lebar/tinggi per klik
   const ALIGN_LIMIT = 0.25;  // batas maksimum pergeseran (25%), supaya konten tidak hilang dari kanvas
 
-  /** Bangun panel nudge posisi (alignment) untuk satu frame — dipakai di dalam frame-item. */
+  /** Format label "X +2% · Y -1%" dari offset sebuah frame. */
+  function formatOffsetLabel(frame) {
+    const xPct = Math.round(frame.offsetX * 100);
+    const yPct = Math.round(frame.offsetY * 100);
+    return `X ${xPct >= 0 ? '+' : ''}${xPct}% · Y ${yPct >= 0 ? '+' : ''}${yPct}%`;
+  }
+
+  /** Geser posisi alignment sebuah frame, lalu refresh pratinjau yang relevan. */
+  function nudgeFrameOffset(frame, dx, dy) {
+    frame.offsetX = Utils.clamp(Utils.roundTo(frame.offsetX + dx, 3), -ALIGN_LIMIT, ALIGN_LIMIT);
+    frame.offsetY = Utils.clamp(Utils.roundTo(frame.offsetY + dy, 3), -ALIGN_LIMIT, ALIGN_LIMIT);
+    logHistory(`Menyesuaikan posisi "${frame.name}"`);
+    refreshInterlacedPreviewIfActive();
+    refreshSimulationIfActive();
+  }
+
+  /** Reset posisi alignment sebuah frame ke tengah (0,0). */
+  function resetFrameOffset(frame) {
+    frame.offsetX = 0;
+    frame.offsetY = 0;
+    logHistory(`Reset posisi "${frame.name}"`);
+    refreshInterlacedPreviewIfActive();
+    refreshSimulationIfActive();
+  }
+
+  /** Bangun panel nudge posisi (alignment) untuk satu frame — dipakai di dalam frame-item (desktop). */
   function buildAlignPanel(frame) {
     const panel = document.createElement('div');
     panel.className = 'frame-align-panel';
 
     const valueEl = document.createElement('span');
     valueEl.className = 'frame-align-value';
-
-    function updateValueLabel() {
-      const xPct = Math.round(frame.offsetX * 100);
-      const yPct = Math.round(frame.offsetY * 100);
-      valueEl.textContent = `X ${xPct >= 0 ? '+' : ''}${xPct}% · Y ${yPct >= 0 ? '+' : ''}${yPct}%`;
-    }
+    const updateValueLabel = () => { valueEl.textContent = formatOffsetLabel(frame); };
     updateValueLabel();
-
-    function nudge(dx, dy) {
-      frame.offsetX = Utils.clamp(Utils.roundTo(frame.offsetX + dx, 3), -ALIGN_LIMIT, ALIGN_LIMIT);
-      frame.offsetY = Utils.clamp(Utils.roundTo(frame.offsetY + dy, 3), -ALIGN_LIMIT, ALIGN_LIMIT);
-      updateValueLabel();
-      logHistory(`Menyesuaikan posisi "${frame.name}"`);
-      refreshInterlacedPreviewIfActive();
-      refreshSimulationIfActive();
-    }
 
     function makeBtn(label, dx, dy, cls) {
       const b = document.createElement('button');
@@ -743,7 +754,8 @@
       b.innerHTML = label;
       b.addEventListener('click', (e) => {
         e.stopPropagation();
-        nudge(dx, dy);
+        nudgeFrameOffset(frame, dx, dy);
+        updateValueLabel();
       });
       return b;
     }
@@ -760,12 +772,8 @@
     btnReset.title = 'Reset posisi view ini';
     btnReset.addEventListener('click', (e) => {
       e.stopPropagation();
-      frame.offsetX = 0;
-      frame.offsetY = 0;
+      resetFrameOffset(frame);
       updateValueLabel();
-      logHistory(`Reset posisi "${frame.name}"`);
-      refreshInterlacedPreviewIfActive();
-      refreshSimulationIfActive();
     });
 
     panel.appendChild(btnUp);
@@ -778,6 +786,77 @@
     return panel;
   }
 
+  /* ============================================================ *
+   * FRAME BROWSER (mobile) — navigasi kiri/kanan pengganti daftar
+   * thumbnail. Menampilkan SATU view (mengikuti activeFrameId, sumber
+   * kebenaran yang sama dipakai panel Original) + kontrol alignment
+   * langsung di bawahnya, memakai fungsi nudge/reset yang sama dengan
+   * panel desktop di atas.
+   * ============================================================ */
+  function renderFrameBrowser() {
+    const browser = document.getElementById('frameBrowser');
+    if (!browser) return;
+
+    if (frames.length === 0) {
+      browser.hidden = true;
+      return;
+    }
+
+    let idx = frames.findIndex(f => f.id === activeFrameId);
+    if (idx === -1) { idx = 0; activeFrameId = frames[0].id; }
+    const frame = frames[idx];
+
+    browser.hidden = false;
+    document.getElementById('frameBrowserLabel').textContent = `View ${idx + 1} / ${frames.length}`;
+    document.getElementById('frameBrowserSub').textContent = `${frame.width}×${frame.height} · ${frame.sizeLabel}`;
+    document.getElementById('frameBrowserAlignValue').textContent = formatOffsetLabel(frame);
+    document.getElementById('frameBrowserPrev').disabled = idx === 0;
+    document.getElementById('frameBrowserNext').disabled = idx === frames.length - 1;
+  }
+
+  /** Pindah frame aktif ke index tertentu (dipanggil oleh tombol prev/next). */
+  function browseToFrameIndex(idx) {
+    if (frames.length === 0) return;
+    const clamped = Utils.clamp(idx, 0, frames.length - 1);
+    const frame = frames[clamped];
+    if (!frame || activeFrameId === frame.id) return;
+    activeFrameId = frame.id;
+    renderFrameBrowser();
+    refreshCurrentModeView(true);
+  }
+
+  function initFrameBrowser() {
+    document.getElementById('frameBrowserPrev').addEventListener('click', () => {
+      const idx = frames.findIndex(f => f.id === activeFrameId);
+      browseToFrameIndex(idx - 1);
+    });
+    document.getElementById('frameBrowserNext').addEventListener('click', () => {
+      const idx = frames.findIndex(f => f.id === activeFrameId);
+      browseToFrameIndex(idx + 1);
+    });
+    document.getElementById('frameBrowserRemove').addEventListener('click', () => {
+      if (activeFrameId) removeFrame(activeFrameId);
+    });
+
+    const dirMap = {
+      up: [0, -ALIGN_STEP], down: [0, ALIGN_STEP],
+      left: [-ALIGN_STEP, 0], right: [ALIGN_STEP, 0],
+    };
+    document.querySelectorAll('.frame-browser-align [data-fb-dir]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const frame = frames.find(f => f.id === activeFrameId);
+        if (!frame) return;
+        const dir = btn.dataset.fbDir;
+        if (dir === 'reset') resetFrameOffset(frame);
+        else {
+          const [dx, dy] = dirMap[dir];
+          nudgeFrameOffset(frame, dx, dy);
+        }
+        renderFrameBrowser();
+      });
+    });
+  }
+
   function renderFrameList() {
     const list = document.getElementById('frameList');
     const empty = document.getElementById('frameListEmpty');
@@ -786,6 +865,7 @@
     updateExportButtonsState();
     updateQualityWarning();
     updateBeforeAfterVisibility();
+    renderFrameBrowser();
 
     frames.forEach((frame, index) => {
       const li = document.createElement('li');
@@ -1487,73 +1567,10 @@
   }
 
   /* ============================================================ *
-   * Tab bar bawah khusus mobile: berpindah antara Sumber / Kanvas / Parameter
+   * MOBILE: gesture di kanvas (pinch-zoom mode 2D, double-tap = fit,
+   * long-press = before/after) — kanvas sekarang STICKY di halaman yang
+   * discroll biasa (bukan lagi drawer mengambang).
    * ============================================================ */
-  /* ============================================================ *
-   * MOBILE: Drawer mengambang (Sumber/Parameter), Bottom Sheet (Export),
-   * FAB, dan gesture (swipe buka/tutup, pinch-zoom, double-tap fit,
-   * long-press before/after).
-   * ============================================================ */
-  const MOBILE_BREAKPOINT = 860;
-  function isMobileLayout() { return window.innerWidth <= MOBILE_BREAKPOINT; }
-
-  function openDrawer(which) {
-    appEl.dataset.drawer = which;
-    document.getElementById('fabWrap').classList.remove('is-open');
-    requestAnimationFrame(() => {
-      Preview.resize();
-      if (appEl.dataset.mode !== 'simulation' && frames.length) {
-        zoomFitToStage(appEl.dataset.mode === 'interlaced');
-      }
-    });
-  }
-
-  function closeDrawer() {
-    if (appEl.dataset.drawer === 'none') return;
-    appEl.dataset.drawer = 'none';
-    requestAnimationFrame(() => {
-      Preview.resize();
-      if (appEl.dataset.mode !== 'simulation' && frames.length) {
-        zoomFitToStage(appEl.dataset.mode === 'interlaced');
-      }
-    });
-  }
-
-  /** Pindahkan #exportSection antara slot desktop (di dalam drawer Parameter)
-   *  dan bottom sheet mobile — satu node DOM yang sama dipindah-tempat
-   *  (bukan diduplikasi), supaya semua id/listener export tetap utuh. */
-  function relocateExportSection() {
-    const section = document.getElementById('exportSection');
-    const desktopSlot = document.getElementById('exportDesktopSlot');
-    const mobileSlot = document.getElementById('bottomSheetExportContent');
-    const target = isMobileLayout() ? mobileSlot : desktopSlot;
-    if (section.parentElement !== target) {
-      target.appendChild(section);
-    }
-  }
-
-  function initMobileDrawers() {
-    const backdrop = document.getElementById('drawerBackdrop');
-    const fabWrap = document.getElementById('fabWrap');
-    const fabMain = document.getElementById('fabMain');
-
-    fabMain.addEventListener('click', () => fabWrap.classList.toggle('is-open'));
-
-    document.querySelectorAll('.fab-item[data-drawer-target]').forEach(btn => {
-      btn.addEventListener('click', () => openDrawer(btn.dataset.drawerTarget));
-    });
-
-    document.getElementById('fabThemeToggle').addEventListener('click', () => {
-      const next = appEl.classList.contains('theme-light') ? 'dark' : 'light';
-      setTheme(next, true);
-      fabWrap.classList.remove('is-open');
-    });
-
-    backdrop.addEventListener('click', closeDrawer);
-
-    relocateExportSection();
-    window.addEventListener('resize', Utils.debounce(relocateExportSection, 150));
-  }
 
   /** Tampilkan/sembunyikan tombol Before/After — hanya relevan di tab
    *  Interlaced (membandingkan hasil interlace vs gambar asli). */
@@ -1678,47 +1695,6 @@
    * alignment). Menutup drawer yang sedang terbuka bisa dari mana saja
    * di dalam drawer itu sendiri (swipe ke arah "keluar" atau swipe turun).
    */
-  function initSwipeGestures() {
-    const EDGE = 24;
-    const THRESHOLD = 60;
-    let startX = null, startY = null, startEdge = null;
-
-    document.addEventListener('touchstart', (e) => {
-      if (!isMobileLayout() || e.touches.length !== 1) return;
-      const t = e.touches[0];
-      startX = t.clientX; startY = t.clientY;
-      startEdge = appEl.dataset.drawer !== 'none'
-        ? 'inside'
-        : (startX <= EDGE ? 'left' : (startX >= window.innerWidth - EDGE ? 'right' : null));
-    }, { passive: true });
-
-    document.addEventListener('touchend', (e) => {
-      if (startX === null) return;
-      const t = e.changedTouches[0];
-      const dx = t.clientX - startX;
-      const dy = t.clientY - startY;
-      const currentDrawer = appEl.dataset.drawer;
-
-      if (currentDrawer !== 'none') {
-        const closingSwipe =
-          (Math.abs(dy) > Math.abs(dx) && dy > THRESHOLD) ||
-          (currentDrawer === 'left' && dx < -THRESHOLD) ||
-          (currentDrawer === 'right' && dx > THRESHOLD) ||
-          (currentDrawer === 'bottom' && dy > THRESHOLD);
-        if (closingSwipe) closeDrawer();
-      } else if (startEdge === 'left' && dx > THRESHOLD && Math.abs(dx) > Math.abs(dy)) {
-        openDrawer('left');
-      } else if (startEdge === 'right' && dx < -THRESHOLD && Math.abs(dx) > Math.abs(dy)) {
-        openDrawer('right');
-      } else if (startEdge === null && startY > window.innerHeight - 120 &&
-                 dy < -THRESHOLD && Math.abs(dy) > Math.abs(dx)) {
-        openDrawer('bottom');
-      }
-
-      startX = null; startY = null; startEdge = null;
-    }, { passive: true });
-  }
-
   /* ============================================================ *
    * Dropzone: klik membuka file dialog, drag & drop memproses file
    * sungguhan (Tahap 2) melalui Frame Store di atas.
@@ -1885,10 +1861,9 @@
     initSimulationControls();
     initExportControls();
     initResizeHandling();
-    initMobileDrawers();
     initCanvasGestures();
-    initSwipeGestures();
     initBeforeAfterButton();
+    initFrameBrowser();
     refreshPresetDropdown();
     renderFrameList();
     renderHistory();
