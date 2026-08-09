@@ -135,11 +135,19 @@
         if (isSim) {
           mainCanvas.hidden = true;
           emptyState.hidden = true; // simEmptyState yang mengambil alih pesan "belum ada gambar" di mode ini
+          // BUG FIX: #canvasSurface dipakai bersama oleh kanvas 2D & WebGL.
+          // transform:scale() dari zoom mode 2D (dihitung utk resolusi foto
+          // asli, bisa sekecil ~17%) tetap menempel dan ikut mengecilkan
+          // kanvas WebGL, padahal Three.js sudah punya zoom sendiri
+          // (zoomFactor di preview.js) — hasilnya gambar simulasi tampak
+          // kecil meski logikanya sendiri sudah benar. Reset di sini.
+          document.getElementById('canvasSurface').style.transform = 'none';
           enterSimulationMode();
         } else {
           webglCanvas.hidden = true;
           Preview.stop();
           mainCanvas.hidden = false;
+          applyZoom(); // terapkan ulang transform zoom 2D (mis. setelah balik dari mode Simulasi yang di-reset ke 'none')
 
           if (mode === 'interlaced') {
             emptyState.hidden = true; // simEmptyState yang mengambil alih pesan bila frame belum cukup

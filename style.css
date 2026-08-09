@@ -800,7 +800,7 @@ input[type="range"]::-moz-range-thumb{
   /* --- Kanvas STICKY: tetap "mengambang" terlihat saat halaman discroll --- */
   #center-panel{
     position: sticky; top: 0; z-index: 20;
-    height: 46vh; min-height: 300px; max-height: 480px;
+    height: 70vh; min-height: 380px; max-height: 720px;
     background: var(--bg-app);
     box-shadow: 0 10px 26px rgba(0,0,0,.4);
     border-bottom: 1px solid var(--border-subtle);
@@ -834,12 +834,12 @@ input[type="range"]::-moz-range-thumb{
   .frame-browser:not([hidden]){ display: flex; }
 
   /* --- Tombol & badge Before/After — posisinya mengikuti area kanvas sticky
-     (fixed relatif viewport, tapi Y dihitung dari tinggi kanvas 46vh supaya
+     (fixed relatif viewport, tapi Y dihitung dari tinggi kanvas 70vh supaya
      selalu pas di pojok kanvas, baik sebelum maupun sesudah discroll). --- */
   .floating-before-after{
     display: flex; align-items: center; justify-content: center;
     position: fixed; z-index: 25;
-    right: 10px; top: calc(46vh - 54px);
+    right: 10px; top: calc(70vh - 54px);
     width: 42px; height: 42px; border-radius: 50%;
     background: rgba(24,26,34,.85);
     backdrop-filter: blur(14px) saturate(170%);
