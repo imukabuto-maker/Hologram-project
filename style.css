@@ -77,6 +77,13 @@ body{
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+  /* Matikan gesture double-tap-zoom & delay 300ms bawaan Safari secara
+     eksplisit. Meta viewport (user-scalable=no) saja kadang tidak cukup
+     ditaati Safari iOS untuk double-tap — touch-action ini yang benar-benar
+     ampuh. Tetap mengizinkan scroll/pan normal (bukan touch-action:none).
+     Elemen yang butuh gesture kustomnya sendiri (crop, kanvas simulasi)
+     sudah override ke touch-action:none secara terpisah. */
+  touch-action: manipulation;
 }
 h1,h2,h3{ margin:0; font-family: var(--font-display); font-weight: 600; }
 button{ font-family: inherit; }
