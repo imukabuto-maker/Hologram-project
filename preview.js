@@ -42,6 +42,7 @@ const Preview = (() => {
   let canvasEl = null;
 
   let textures = [];
+  let frameOffsets = []; // [{x,y}, ...] offset alignment per-view, sejajar index dengan textures
   let numViews = 0;
   let planeAspect = 1; // lebar/tinggi gambar (world unit plane selalu tinggi=1)
 
@@ -94,8 +95,8 @@ const Preview = (() => {
   function buildShaderMaterial(n) {
     n = Math.max(2, Math.min(n, MAX_SHADER_VIEWS));
 
-    const samplerDecls = Array.from({ length: n }, (_, i) => `uniform sampler2D uTex${i};`).join('\n');
-    const pickChain = Array.from({ length: n }, (_, i) => `if (idx == ${i}) return texture2D(uTex${i}, uv);`).join('\n        ');
+    const samplerDecls = Array.from({ length: n }, (_, i) => `uniform sampler2D uTex${i};\nuniform vec2 uOffset${i};`).join('\n');
+    const pickChain = Array.from({ length: n }, (_, i) => `if (idx == ${i}) return texture2D(uTex${i}, uv - uOffset${i});`).join('\n        ');
 
     const vertexShader = `
       varying vec2 vUv;
@@ -133,7 +134,15 @@ const Preview = (() => {
       uViewPos: { value: 0 },
       uNumViews: { value: n },
     };
-    for (let i = 0; i < n; i++) uniforms[`uTex${i}`] = { value: textures[i] || textures[textures.length - 1] };
+    for (let i = 0; i < n; i++) {
+      uniforms[`uTex${i}`] = { value: textures[i] || textures[textures.length - 1] };
+      const off = frameOffsets[i] || { x: 0, y: 0 };
+      // Y dibalik: konvensi offsetY aplikasi ini "positif = geser turun" (ruang
+      // kanvas 2D, sumbu-Y ke bawah), sedangkan UV tekstur Three.js (dengan
+      // flipY default) punya sumbu-V ke ATAS — jadi tandanya perlu dibalik
+      // supaya arah nudge terasa konsisten dengan yang terlihat di tab Interlaced.
+      uniforms[`uOffset${i}`] = { value: new THREE.Vector2(off.x, -off.y) };
+    }
 
     return new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader, transparent: true });
   }
@@ -150,23 +159,30 @@ const Preview = (() => {
     }
     textures.forEach(t => t.dispose());
     textures = [];
+    frameOffsets = [];
   }
 
   /**
-   * Set/replace daftar gambar (HTMLImageElement) yang dipakai simulasi.
-   * Dipanggil setiap kali frame ditambah/dihapus/diurutkan ulang saat mode
-   * simulasi sedang aktif, atau saat pertama kali masuk mode simulasi.
-   * Mengembalikan true bila berhasil dibangun (>=2 gambar valid).
+   * Set/replace daftar view yang dipakai simulasi. Menerima objek frame
+   * LENGKAP (bukan cuma HTMLImageElement mentah) — { img, width, height,
+   * offsetX, offsetY } — supaya alignment yang diatur pengguna di panel
+   * Sumber ikut terlihat di simulasi, konsisten dengan tab Interlaced.
+   * Dipanggil setiap kali frame ditambah/dihapus/diurutkan ulang/digeser
+   * saat mode simulasi sedang aktif, atau saat pertama kali masuk mode
+   * simulasi. Mengembalikan true bila berhasil dibangun (>=2 view valid).
    */
-  function setFrames(images) {
+  function setFrames(frameObjs) {
     if (!renderer) return false; // ensureRenderer belum dipanggil
     disposeSceneContents();
 
-    numViews = Math.min(images.length, MAX_SHADER_VIEWS);
+    numViews = Math.min(frameObjs.length, MAX_SHADER_VIEWS);
     if (numViews < 2) return false; // caller (app.js) menampilkan pesan "butuh minimal 2 gambar"
 
-    textures = images.slice(0, numViews).map(img => {
-      const tex = new THREE.Texture(img);
+    const activeFrames = frameObjs.slice(0, numViews);
+    frameOffsets = activeFrames.map(f => ({ x: f.offsetX || 0, y: f.offsetY || 0 }));
+
+    textures = activeFrames.map(f => {
+      const tex = new THREE.Texture(f.img);
       tex.needsUpdate = true;
       tex.wrapS = THREE.ClampToEdgeWrapping;
       tex.wrapT = THREE.ClampToEdgeWrapping;
@@ -176,7 +192,7 @@ const Preview = (() => {
       return tex;
     });
 
-    const first = images[0];
+    const first = activeFrames[0].img;
     planeAspect = (first.naturalWidth || first.width || 1) / (first.naturalHeight || first.height || 1);
 
     material = buildShaderMaterial(numViews);

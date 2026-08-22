@@ -185,7 +185,7 @@
     simEmptyState.hidden = true;
     webglCanvas.hidden = false;
 
-    const ok = Preview.setFrames(frames.map(f => f.img));
+    const ok = Preview.setFrames(frames);
     if (!ok) {
       setInsufficientFramesMessage(
         'Simulasi butuh minimal 2 gambar',
